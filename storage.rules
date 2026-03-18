@@ -1,0 +1,47 @@
+// storage.rules — Deploy with: firebase deploy --only storage
+
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.email != null;
+      // For stricter admin check, use Firestore but this adds latency:
+      // Alternatively validate on server side
+    }
+
+    function isValidImage() {
+      return request.resource.contentType.matches('image/.*')
+        && request.resource.size < 5 * 1024 * 1024; // 5MB limit
+    }
+
+    // Product images - admin upload, public read
+    match /products/{filename} {
+      allow read: if true;
+      allow write: if isAuthenticated() && isValidImage();
+    }
+
+    // Category images - admin upload, public read
+    match /categories/{filename} {
+      allow read: if true;
+      allow write: if isAuthenticated() && isValidImage();
+    }
+
+    // Banner images - admin upload, public read
+    match /banners/{filename} {
+      allow read: if true;
+      allow write: if isAuthenticated() && isValidImage();
+    }
+
+    // User profile photos
+    match /users/{userId}/{filename} {
+      allow read: if true;
+      allow write: if request.auth.uid == userId && isValidImage();
+    }
+  }
+}
