@@ -2,9 +2,13 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box, Container, Typography, Button, IconButton, Divider,
-  Paper, Chip, TextField, Alert,
+  Paper, Chip, TextField, Alert, CircularProgress,
 } from '@mui/material';
 import { Add, Remove, Delete, ShoppingBag, ArrowBack } from '@mui/icons-material';
+import {
+  collection, query, where, getDocs,
+} from 'firebase/firestore';
+import { db, COLLECTIONS } from '../../firebase';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import { ZAP_COLORS } from '../../theme';
@@ -15,14 +19,53 @@ const Cart = () => {
   const {
     items, coupon, setCoupon, updateQuantity, removeFromCart,
     subtotal, discount, deliveryCharge, total, savings,
-    FREE_DELIVERY_ABOVE, DELIVERY_CHARGE,
+    FREE_DELIVERY_ABOVE,
   } = useCart();
   const [couponInput, setCouponInput] = React.useState('');
   const [couponError, setCouponError] = React.useState('');
+  const [couponLoading, setCouponLoading] = React.useState(false);
 
   const handleCoupon = async () => {
-    // TODO: validate against Firestore coupons collection
-    setCouponError('Invalid coupon code');
+    const code = couponInput.trim().toUpperCase();
+    if (!code) return;
+    setCouponLoading(true);
+    setCouponError('');
+    try {
+      const snap = await getDocs(
+        query(
+          collection(db, COLLECTIONS.COUPONS),
+          where('code', '==', code),
+          where('active', '==', true),
+        )
+      );
+      if (snap.empty) {
+        setCouponError('Invalid or expired coupon code.');
+        return;
+      }
+      const data = snap.docs[0].data();
+
+      // Check expiry
+      if (data.expiresAt) {
+        const expiry = data.expiresAt?.toDate ? data.expiresAt.toDate() : new Date(data.expiresAt);
+        if (expiry < new Date()) {
+          setCouponError('This coupon has expired.');
+          return;
+        }
+      }
+
+      // Check minimum order
+      if (data.minOrder && subtotal < data.minOrder) {
+        setCouponError(`Minimum order ₹${data.minOrder} required for this coupon.`);
+        return;
+      }
+
+      setCoupon({ code: data.code, type: data.type, value: data.value, maxDiscount: data.maxDiscount });
+      setCouponInput('');
+    } catch (err) {
+      setCouponError('Failed to validate coupon. Please try again.');
+    } finally {
+      setCouponLoading(false);
+    }
   };
 
   if (!items.length) {
@@ -39,7 +82,7 @@ const Cart = () => {
   }
 
   return (
-    <Box sx={{ pb: { xs: 10, md: 3 }, pt: 1 }}>
+    <Box sx={{ pb: { xs: 13, md: 3 }, pt: 1 }}>
       <Container maxWidth="lg">
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, px: { xs: 1, sm: 0 } }}>
           <IconButton onClick={() => navigate(-1)} size="small">
@@ -154,8 +197,8 @@ const Cart = () => {
                   helperText={couponError}
                   sx={{ flex: 1 }}
                 />
-                <Button variant="outlined" size="small" onClick={handleCoupon} sx={{ flexShrink: 0 }}>
-                  Apply
+                <Button variant="outlined" size="small" onClick={handleCoupon} disabled={couponLoading} sx={{ flexShrink: 0 }}>
+                  {couponLoading ? <CircularProgress size={14} /> : 'Apply'}
                 </Button>
               </Box>
               {coupon && (

@@ -5,7 +5,7 @@ import {
   FormControlLabel, Dialog, DialogTitle, DialogContent,
   CircularProgress, Divider, Chip, IconButton, Alert,
 } from '@mui/material';
-import { Add, ArrowBack, CheckCircle } from '@mui/icons-material';
+import { Add, ArrowBack, CheckCircle, Phone, HeadsetMic } from '@mui/icons-material';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -136,19 +136,40 @@ const Checkout = () => {
           {paymentMethod === 'cod' ? 'Please keep cash ready at the time of delivery.' : 'Payment confirmed!'}
         </Typography>
         <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <Button variant="contained" onClick={() => navigate(`/orders`)}>
+          <Button variant="contained" onClick={() => navigate('/orders')}>
             Track Order
           </Button>
           <Button variant="outlined" onClick={() => navigate('/')}>
             Continue Shopping
           </Button>
         </Box>
+        <Box sx={{ mt: 3, pt: 3, borderTop: `1px solid ${ZAP_COLORS.border}` }}>
+          <Typography variant="caption" color="text.secondary" display="block" mb={1.5} textAlign="center">
+            Need help with your order?
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1.5, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <Button
+              variant="outlined" size="small" startIcon={<Phone />}
+              component="a" href="tel:+919876543210"
+              sx={{ borderRadius: 10, fontSize: '0.8rem' }}
+            >
+              Call Support
+            </Button>
+            <Button
+              variant="outlined" size="small" startIcon={<HeadsetMic />}
+              onClick={() => navigate('/help')}
+              sx={{ borderRadius: 10, fontSize: '0.8rem' }}
+            >
+              Help Center
+            </Button>
+          </Box>
+        </Box>
       </Container>
     );
   }
 
   return (
-    <Box sx={{ pb: { xs: 10, md: 3 }, pt: 1 }}>
+    <Box sx={{ pb: { xs: 13, md: 3 }, pt: 1 }}>
       <Container maxWidth="lg">
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, px: { xs: 1, sm: 0 } }}>
           <IconButton onClick={() => navigate('/cart')} size="small"><ArrowBack /></IconButton>

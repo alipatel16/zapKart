@@ -82,7 +82,7 @@ const ProductDetail = () => {
   }
 
   return (
-    <Box sx={{ pb: { xs: 10, md: 3 } }}>
+    <Box sx={{ pb: { xs: 13, md: 3 } }}>
       <Container maxWidth="lg">
         {/* Back */}
         <Box sx={{ py: 1.5, px: { xs: 1, sm: 0 } }}>
@@ -186,36 +186,45 @@ const ProductDetail = () => {
             {/* Add to cart */}
             <Box sx={{ mb: 3 }}>
               {!inCart ? (
-                <Button
-                  variant="contained" size="large" fullWidth
-                  disabled={product.stock <= 0}
+                <Box
                   onClick={() => {
-                    if (!user) {
-                      navigate('/login', { state: { from: { pathname: `/product/${id}` } } });
-                      return;
-                    }
+                    if (product.stock <= 0) return;
+                    if (!user) { navigate('/login', { state: { from: { pathname: `/product/${id}` } } }); return; }
                     addToCart(product);
                   }}
+                  sx={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1,
+                    py: 1.7, borderRadius: 3, cursor: product.stock <= 0 ? 'not-allowed' : 'pointer',
+                    background: product.stock <= 0 ? ZAP_COLORS.border : `linear-gradient(135deg, ${ZAP_COLORS.primary} 0%, ${ZAP_COLORS.primaryDark} 100%)`,
+                    color: product.stock <= 0 ? ZAP_COLORS.textMuted : '#fff',
+                    fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: '1.05rem', letterSpacing: '0.04em',
+                    boxShadow: product.stock <= 0 ? 'none' : `0 6px 20px ${ZAP_COLORS.primary}45`,
+                    transition: 'all 0.2s cubic-bezier(0.34,1.56,0.64,1)',
+                    '&:hover': product.stock <= 0 ? {} : { transform: 'scale(1.015)', boxShadow: `0 8px 24px ${ZAP_COLORS.primary}55` },
+                    '&:active': { transform: 'scale(0.97)' },
+                  }}
                 >
+                  <Add sx={{ fontSize: 22 }} />
                   {product.stock <= 0 ? 'Out of Stock' : 'Add to Cart'}
-                </Button>
+                </Box>
               ) : (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <Box sx={{
-                    display: 'flex', alignItems: 'center',
-                    background: ZAP_COLORS.primary, borderRadius: 2, overflow: 'hidden',
+                    display: 'flex', alignItems: 'center', flex: 1,
+                    background: `linear-gradient(135deg, ${ZAP_COLORS.primary} 0%, ${ZAP_COLORS.primaryDark} 100%)`,
+                    borderRadius: 3, overflow: 'hidden', boxShadow: `0 4px 14px ${ZAP_COLORS.primary}40`,
                   }}>
-                    <IconButton onClick={() => { if (qty <= 1) removeFromCart(product.id); else updateQuantity(product.id, qty - 1); }} sx={{ color: '#fff', p: 1.2 }}>
+                    <IconButton onClick={() => { if (qty <= 1) removeFromCart(product.id); else updateQuantity(product.id, qty - 1); }} sx={{ color: '#fff', p: 1.3, '&:hover': { background: 'rgba(0,0,0,0.15)' } }}>
                       <Remove />
                     </IconButton>
-                    <Typography sx={{ color: '#fff', fontWeight: 800, px: 2, fontSize: '1.1rem', minWidth: 32, textAlign: 'center' }}>
+                    <Typography sx={{ color: '#fff', fontWeight: 800, flex: 1, textAlign: 'center', fontSize: '1.1rem', fontFamily: "'Syne', sans-serif" }}>
                       {qty}
                     </Typography>
-                    <IconButton onClick={() => updateQuantity(product.id, qty + 1)} sx={{ color: '#fff', p: 1.2 }}>
+                    <IconButton onClick={() => updateQuantity(product.id, qty + 1)} sx={{ color: '#fff', p: 1.3, '&:hover': { background: 'rgba(0,0,0,0.15)' } }}>
                       <Add />
                     </IconButton>
                   </Box>
-                  <Button variant="contained" size="large" onClick={() => navigate('/cart')}>
+                  <Button variant="contained" size="large" onClick={() => navigate('/cart')} sx={{ borderRadius: 3, px: 3 }}>
                     Go to Cart
                   </Button>
                 </Box>

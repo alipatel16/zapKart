@@ -11,6 +11,7 @@ import { db, COLLECTIONS } from '../../firebase';
 import BannerCarousel from '../../components/user/BannerCarousel';
 import ProductCard, { ProductCardSkeleton } from '../../components/user/ProductCard';
 import { ZAP_COLORS } from '../../theme';
+import ActiveOrdersBar from '../../components/user/ActiveOrdersBar';
 import { useStore } from '../../context/StoreContext';
 
 const SectionHeader = ({ title, subtitle, onSeeAll, seeAllLabel = 'See all' }) => (
@@ -122,7 +123,7 @@ const Home = () => {
   }, [activeUserStore?.id]);
 
   return (
-    <Box sx={{ pb: { xs: 9, md: 3 } }}>
+    <Box sx={{ pb: { xs: 20, md: 3 } }}>
       <Container maxWidth="lg" sx={{ px: { xs: 1.5, sm: 2 } }}>
 
         {/* Delivery info strip */}
@@ -151,6 +152,11 @@ const Home = () => {
               }}
             />
           ))}
+        </Box>
+
+        {/* Active orders bar (desktop inline card; mobile rendered from UserLayout) */}
+        <Box sx={{ display: { xs: 'none', md: 'block' } }}>
+          <ActiveOrdersBar />
         </Box>
 
         {/* Banner Carousel */}

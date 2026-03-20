@@ -5,11 +5,12 @@ import theme from './theme';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import { StoreProvider } from './context/StoreContext';
+import ActiveOrdersBar from './components/user/ActiveOrdersBar';
 
 // ── Common ───────────────────────────────────────────────────────────────────
 const Header        = lazy(() => import('./components/common/Header'));
 const BottomNav     = lazy(() => import('./components/common/BottomNav'));
-const LocationGate  = lazy(() => import('./pages/user/LocationGate'));
+const LocationGate      = lazy(() => import('./pages/user/LocationGate'));
 
 // ── User pages ────────────────────────────────────────────────────────────────
 const Home          = lazy(() => import('./pages/user/Home'));
@@ -18,8 +19,13 @@ const Cart          = lazy(() => import('./pages/user/Cart'));
 const Checkout      = lazy(() => import('./pages/user/Checkout'));
 const OrderHistory  = lazy(() => import('./pages/user/OrderHistory'));
 const ProductDetail = lazy(() => import('./pages/user/ProductDetail'));
-const CategoryPage  = lazy(() => import('./pages/user/CategoryPage'));
+const CategoryPage    = lazy(() => import('./pages/user/CategoryPage'));
+const CategoriesPage  = lazy(() => import('./pages/user/CategoriesPage'));
 const Profile       = lazy(() => import('./pages/user/Profile'));
+const HelpPage      = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.HelpPage })));
+const AboutPage     = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.AboutPage })));
+const PrivacyPage   = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.PrivacyPage })));
+const TermsPage     = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.TermsPage })));
 
 // ── Admin pages ───────────────────────────────────────────────────────────────
 const AdminLayout    = lazy(() => import('./pages/admin/AdminLayout'));
@@ -85,6 +91,9 @@ const UserLayout = ({ children }) => (
         {children}
       </Box>
       <Suspense fallback={null}>
+        <ActiveOrdersBar />
+      </Suspense>
+      <Suspense fallback={null}>
         <BottomNav />
       </Suspense>
     </Box>
@@ -118,10 +127,14 @@ function App() {
                   <Route path="/orders"       element={<UserLayout><OrderHistory /></UserLayout>} />
                   <Route path="/product/:id"  element={<UserLayout><ProductDetail /></UserLayout>} />
                   <Route path="/category/:id" element={<UserLayout><CategoryPage /></UserLayout>} />
-                  <Route path="/categories"   element={<UserLayout><CategoryPage /></UserLayout>} />
+                  <Route path="/categories"   element={<UserLayout><CategoriesPage /></UserLayout>} />
                   <Route path="/products"     element={<UserLayout><CategoryPage /></UserLayout>} />
                   <Route path="/search"       element={<UserLayout><CategoryPage /></UserLayout>} />
                   <Route path="/profile"      element={<UserLayout><Profile /></UserLayout>} />
+                  <Route path="/help"         element={<UserLayout><HelpPage /></UserLayout>} />
+                  <Route path="/about"        element={<UserLayout><AboutPage /></UserLayout>} />
+                  <Route path="/privacy"      element={<UserLayout><PrivacyPage /></UserLayout>} />
+                  <Route path="/terms"        element={<UserLayout><TermsPage /></UserLayout>} />
 
                   {/* ADMIN ROUTES */}
                   <Route path="/admin" element={<AdminLayout />}>

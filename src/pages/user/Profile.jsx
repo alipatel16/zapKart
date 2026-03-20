@@ -66,7 +66,7 @@ const Profile = () => {
   };
 
   return (
-    <Box sx={{ pb: { xs: 10, md: 3 }, pt: 1 }}>
+    <Box sx={{ pb: { xs: 20, md: 3 }, pt: 1 }}>
       <Container maxWidth="sm">
         <Typography variant="h6" fontWeight={700} sx={{ px: { xs: 1, sm: 0 }, mb: 2 }}>My Profile</Typography>
 

@@ -78,6 +78,8 @@ const BannerCarousel = ({ banners = [], loading = false }) => {
                 component="img"
                 src={banner.imageUrl}
                 alt={banner.title || 'Banner'}
+                loading="lazy"
+                decoding="async"
                 sx={{
                   width: '100%', height: '100%',
                   objectFit: 'cover',

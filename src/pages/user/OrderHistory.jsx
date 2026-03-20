@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Box, Container, Typography, Paper, Chip, Button, Divider,
+  Box, Container, Typography, Chip, Button, Divider,
   CircularProgress, Tabs, Tab, Accordion, AccordionSummary,
-  AccordionDetails, Stepper, Step, StepLabel, StepConnector,
-  IconButton, Skeleton,
+  AccordionDetails, Stepper, Step, StepLabel,
+  IconButton, Skeleton, Dialog, DialogTitle, DialogContent, DialogActions, Alert,
 } from '@mui/material';
-import { ExpandMore, Download, Refresh, ArrowBack } from '@mui/icons-material';
+import { ExpandMore, Download, Refresh, ArrowBack, Phone, HeadsetMic, Cancel } from '@mui/icons-material';
 import {
   collection, query, where, orderBy, getDocs, limit, startAfter, getCountFromServer,
+  doc, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -58,8 +59,34 @@ const OrderStatusStepper = ({ status }) => {
   );
 };
 
-const OrderCard = ({ order, userProfile }) => {
+const OrderCard = ({ order, userProfile, expanded, onChange, onCancelled }) => {
   const [downloading, setDownloading] = useState(false);
+  const [cancelDialog, setCancelDialog] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState('');
+
+  const canCancel = ['placed', 'confirmed'].includes(order.status);
+
+  const handleCancel = async () => {
+    setCancelling(true);
+    setCancelError('');
+    try {
+      await updateDoc(doc(db, COLLECTIONS.ORDERS, order.id), {
+        status: 'cancelled',
+        statusHistory: [
+          ...(order.statusHistory || []),
+          { status: 'cancelled', timestamp: new Date().toISOString() },
+        ],
+        updatedAt: serverTimestamp(),
+      });
+      setCancelDialog(false);
+      onCancelled?.();
+    } catch (err) {
+      setCancelError('Failed to cancel. Please try again or contact support.');
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const handleDownloadInvoice = async (e) => {
     e.stopPropagation();
@@ -78,12 +105,15 @@ const OrderCard = ({ order, userProfile }) => {
   return (
     <Accordion
       elevation={0}
+      expanded={expanded}
+      onChange={onChange}
       sx={{
         border: `1px solid ${ZAP_COLORS.border}`,
         borderRadius: '12px !important',
         mb: 1.5,
         '&:before': { display: 'none' },
         '&.Mui-expanded': { boxShadow: `0 4px 16px ${ZAP_COLORS.primary}12` },
+        ...(expanded && { boxShadow: `0 0 0 2px ${ZAP_COLORS.primary}` }),
       }}
     >
       <AccordionSummary expandIcon={<ExpandMore />} sx={{ px: 2, py: 1 }}>
@@ -170,17 +200,69 @@ const OrderCard = ({ order, userProfile }) => {
           </Box>
         </Box>
 
-        {/* Invoice download */}
-        <Button
-          size="small"
-          variant="outlined"
-          startIcon={downloading ? <CircularProgress size={14} /> : <Download />}
-          onClick={handleDownloadInvoice}
-          disabled={downloading}
-          sx={{ borderRadius: 2 }}
-        >
-          Download Invoice
-        </Button>
+        {/* Action buttons */}
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Button
+            size="small" variant="outlined"
+            startIcon={downloading ? <CircularProgress size={14} /> : <Download />}
+            onClick={handleDownloadInvoice} disabled={downloading}
+            sx={{ borderRadius: 2 }}
+          >
+            Invoice
+          </Button>
+
+          {canCancel && (
+            <Button
+              size="small" variant="outlined" color="error"
+              startIcon={<Cancel />}
+              onClick={(e) => { e.stopPropagation(); setCancelDialog(true); }}
+              sx={{ borderRadius: 2 }}
+            >
+              Cancel Order
+            </Button>
+          )}
+
+          <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
+            <Button
+              size="small" variant="text"
+              component="a" href="tel:+919876543210"
+              startIcon={<Phone />}
+              sx={{ borderRadius: 2, color: ZAP_COLORS.primary, fontSize: '0.75rem' }}
+            >
+              Call
+            </Button>
+            <Button
+              size="small" variant="text"
+              component="a" href="https://wa.me/919876543210" target="_blank"
+              sx={{ borderRadius: 2, color: '#25D366', fontSize: '0.75rem' }}
+            >
+              WhatsApp
+            </Button>
+          </Box>
+        </Box>
+
+        {/* Cancel confirmation dialog */}
+        <Dialog open={cancelDialog} onClose={() => !cancelling && setCancelDialog(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+          <DialogTitle fontWeight={700} sx={{ fontFamily: "'Syne', sans-serif" }}>Cancel Order?</DialogTitle>
+          <DialogContent>
+            {cancelError && <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>{cancelError}</Alert>}
+            <Typography variant="body2" color="text.secondary">
+              Are you sure you want to cancel order <strong>#{order.orderNumber}</strong>?
+              This action cannot be undone.
+            </Typography>
+            {order.paymentMethod !== 'cod' && order.paymentStatus === 'paid' && (
+              <Alert severity="info" sx={{ mt: 1.5, borderRadius: 2, fontSize: '0.8rem' }}>
+                Your payment will be refunded within 5–7 business days.
+              </Alert>
+            )}
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
+            <Button onClick={() => setCancelDialog(false)} disabled={cancelling} variant="outlined" fullWidth>Keep Order</Button>
+            <Button onClick={handleCancel} disabled={cancelling} color="error" variant="contained" fullWidth>
+              {cancelling ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : 'Yes, Cancel'}
+            </Button>
+          </DialogActions>
+        </Dialog>
       </AccordionDetails>
     </Accordion>
   );
@@ -189,6 +271,9 @@ const OrderCard = ({ order, userProfile }) => {
 const OrderHistory = () => {
   const { user, userProfile } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const highlightId = searchParams.get('highlight');
+  const [expandedId, setExpandedId] = useState(highlightId || false);
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
@@ -215,6 +300,14 @@ const OrderHistory = () => {
       const snap = await getDocs(q);
       const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setOrders(docs);
+      // If a specific order was linked to, expand it and scroll to it
+      if (highlightId && docs.find((d) => d.id === highlightId)) {
+        setExpandedId(highlightId);
+        setTimeout(() => {
+          const el = document.getElementById(`order-${highlightId}`);
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 300);
+      }
       setPage(pageIndex);
       if (snap.docs.length > 0) {
         setCursors((prev) => {
@@ -251,7 +344,7 @@ const OrderHistory = () => {
   ];
 
   return (
-    <Box sx={{ pb: { xs: 10, md: 3 }, pt: 1 }}>
+    <Box sx={{ pb: { xs: 13, md: 3 }, pt: 1 }}>
       <Container maxWidth="md">
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, px: { xs: 1, sm: 0 } }}>
           <IconButton onClick={() => navigate(-1)} size="small"><ArrowBack /></IconButton>
@@ -287,8 +380,29 @@ const OrderHistory = () => {
         ) : (
           <>
             {orders.map((order) => (
-              <OrderCard key={order.id} order={order} userProfile={userProfile} />
+              <Box key={order.id} id={`order-${order.id}`}>
+                <OrderCard
+                  order={order}
+                  userProfile={userProfile}
+                  expanded={expandedId === order.id}
+                  onChange={(_, isOpen) => setExpandedId(isOpen ? order.id : false)}
+                  onCancelled={() => fetchOrders(0, statusFilter)}
+                />
+              </Box>
             ))}
+
+            {/* Need help */}
+            <Box sx={{ mt: 2, p: 2, borderRadius: 2.5, background: `${ZAP_COLORS.primary}08`, border: `1px solid ${ZAP_COLORS.primary}20`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
+              <Typography variant="body2" fontWeight={600}>Need help with an order?</Typography>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button size="small" variant="outlined" component="a" href="tel:+919876543210" startIcon={<Phone />} sx={{ borderRadius: 10, fontSize: '0.75rem' }}>
+                  Call Us
+                </Button>
+                <Button size="small" variant="outlined" startIcon={<HeadsetMic />} onClick={() => navigate('/help')} sx={{ borderRadius: 10, fontSize: '0.75rem' }}>
+                  Help Center
+                </Button>
+              </Box>
+            </Box>
 
             {/* Pagination */}
             {totalPages > 1 && (
