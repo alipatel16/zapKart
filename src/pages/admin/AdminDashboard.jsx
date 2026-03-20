@@ -16,6 +16,7 @@ import {
 import { db, COLLECTIONS } from '../../firebase';
 import { getOrderStatusColor, ORDER_STATUSES, formatCurrency, formatDate } from '../../utils/helpers';
 import { ZAP_COLORS } from '../../theme';
+import { useStore } from '../../context/StoreContext';
 
 const StatCard = ({ icon, label, value, sub, color, loading }) => (
   <Card elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, height: '100%' }}>
@@ -46,6 +47,7 @@ const StatCard = ({ icon, label, value, sub, color, loading }) => (
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
+  const { adminStore } = useStore();
   const [stats, setStats] = useState({ orders: 0, revenue: 0, products: 0, users: 0, pendingOrders: 0, lowStock: 0 });
   const [recentOrders, setRecentOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -96,7 +98,7 @@ const AdminDashboard = () => {
       }
     };
     fetchStats();
-  }, [dateRange]);
+  }, [dateRange, adminStore?.id]);
 
   const quickLinks = [
     { label: 'Add Product', path: '/admin/products/new', color: ZAP_COLORS.primary, icon: '📦' },

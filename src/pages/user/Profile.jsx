@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box, Container, Typography, Paper, Avatar, Button, TextField,
-  Divider, IconButton, Dialog, DialogTitle, DialogContent, DialogActions,
-  Chip, Alert, CircularProgress,
+  IconButton, Dialog, DialogTitle, DialogContent,
+  Alert, CircularProgress,
+  Chip,
 } from '@mui/material';
 import { Edit, Add, Delete, Logout, History, LocationOn } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
+import AddressForm, { EMPTY_ADDRESS } from '../../components/user/AddressForm';
 import { ZAP_COLORS } from '../../theme';
 
 const Profile = () => {
@@ -16,7 +18,9 @@ const Profile = () => {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ displayName: userProfile?.displayName || '', phone: userProfile?.phone || '' });
   const [addressDialog, setAddressDialog] = useState(false);
-  const [newAddress, setNewAddress] = useState({ label: 'Home', name: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '' });
+  const [newAddress, setNewAddress] = useState(EMPTY_ADDRESS);
+  const [addressSaving, setAddressSaving] = useState(false);
+  const [addressError, setAddressError] = useState('');
   const [success, setSuccess] = useState('');
 
   if (!user) {
@@ -41,14 +45,18 @@ const Profile = () => {
   };
 
   const handleAddAddress = async () => {
+    setAddressSaving(true);
+    setAddressError('');
     try {
       await addAddress(newAddress);
       setAddressDialog(false);
-      setNewAddress({ label: 'Home', name: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '' });
+      setNewAddress(EMPTY_ADDRESS);
       setSuccess('Address added!');
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      alert(err.message);
+      setAddressError(err.message);
+    } finally {
+      setAddressSaving(false);
     }
   };
 
@@ -173,36 +181,18 @@ const Profile = () => {
         </Button>
 
         {/* Add Address Dialog */}
-        <Dialog open={addressDialog} onClose={() => setAddressDialog(false)} maxWidth="sm" fullWidth>
+        <Dialog open={addressDialog} onClose={() => { setAddressDialog(false); setAddressError(''); }} maxWidth="sm" fullWidth>
           <DialogTitle fontWeight={700}>Add New Address</DialogTitle>
-          <DialogContent>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pt: 1 }}>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                {['Home', 'Work', 'Other'].map((l) => (
-                  <Chip key={l} label={l} size="small"
-                    onClick={() => setNewAddress((p) => ({ ...p, label: l }))}
-                    variant={newAddress.label === l ? 'filled' : 'outlined'}
-                    color={newAddress.label === l ? 'primary' : 'default'}
-                  />
-                ))}
-              </Box>
-              <Box sx={{ display: 'flex', gap: 1.5 }}>
-                <TextField label="Full Name" value={newAddress.name} onChange={(e) => setNewAddress((p) => ({ ...p, name: e.target.value }))} size="small" fullWidth required />
-                <TextField label="Phone" value={newAddress.phone} onChange={(e) => setNewAddress((p) => ({ ...p, phone: e.target.value }))} size="small" fullWidth required />
-              </Box>
-              <TextField label="Address Line 1" value={newAddress.line1} onChange={(e) => setNewAddress((p) => ({ ...p, line1: e.target.value }))} size="small" fullWidth required />
-              <TextField label="Address Line 2 (Optional)" value={newAddress.line2} onChange={(e) => setNewAddress((p) => ({ ...p, line2: e.target.value }))} size="small" fullWidth />
-              <Box sx={{ display: 'flex', gap: 1.5 }}>
-                <TextField label="City" value={newAddress.city} onChange={(e) => setNewAddress((p) => ({ ...p, city: e.target.value }))} size="small" fullWidth required />
-                <TextField label="State" value={newAddress.state} onChange={(e) => setNewAddress((p) => ({ ...p, state: e.target.value }))} size="small" fullWidth required />
-                <TextField label="Pincode" value={newAddress.pincode} onChange={(e) => setNewAddress((p) => ({ ...p, pincode: e.target.value }))} size="small" sx={{ width: 120 }} required />
-              </Box>
-            </Box>
+          <DialogContent sx={{ pt: 2 }}>
+            <AddressForm
+              value={newAddress}
+              onChange={setNewAddress}
+              onSave={handleAddAddress}
+              onCancel={() => { setAddressDialog(false); setAddressError(''); }}
+              saving={addressSaving}
+              error={addressError}
+            />
           </DialogContent>
-          <DialogActions sx={{ px: 3, pb: 2 }}>
-            <Button onClick={() => setAddressDialog(false)}>Cancel</Button>
-            <Button variant="contained" onClick={handleAddAddress}>Save Address</Button>
-          </DialogActions>
         </Dialog>
       </Container>
     </Box>

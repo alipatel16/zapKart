@@ -4,7 +4,7 @@ import {
   Box, Container, Typography, Button, Chip, Skeleton,
   IconButton, Divider, Grid, Alert,
 } from '@mui/material';
-import { Add, Remove, ArrowBack, Share } from '@mui/icons-material';
+import { Add, Remove, ArrowBack } from '@mui/icons-material';
 import { doc, getDoc, collection, query, where, limit, getDocs } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
 import { useCart } from '../../context/CartContext';

@@ -15,6 +15,7 @@ import {
 import { db, COLLECTIONS } from '../../firebase';
 import ProductCard, { ProductCardSkeleton } from '../../components/user/ProductCard';
 import { ZAP_COLORS } from '../../theme';
+import { useStore } from '../../context/StoreContext';
 
 const PAGE_SIZE = 12;
 
@@ -24,6 +25,7 @@ const CategoryPage = () => {
   const [searchParams] = useSearchParams();
   const filterParam = searchParams.get('filter');
 
+  const { activeUserStore } = useStore();
   const [category, setCategory] = useState(null);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -47,6 +49,7 @@ const CategoryPage = () => {
 
   const buildConstraints = useCallback(() => {
     const c = [where('active', '==', true)];
+    if (activeUserStore?.id) c.push(where('storeId', '==', activeUserStore.id));
     if (id) c.push(where('categoryId', '==', id));
     if (filterParam === 'featured') c.push(where('isFeatured', '==', true));
     if (filterParam === 'exclusive') c.push(where('isExclusive', '==', true));

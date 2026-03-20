@@ -43,6 +43,7 @@ export const COLLECTIONS = {
   PURCHASE: 'purchases',
   INVENTORY: 'inventory',
   SETTINGS: 'settings',
+  STORES: 'stores',         // NEW: store/warehouse locations
 };
 
 // ============================================================

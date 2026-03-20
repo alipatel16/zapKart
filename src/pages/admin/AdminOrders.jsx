@@ -17,11 +17,13 @@ import {
 import { db, COLLECTIONS } from '../../firebase';
 import { generateInvoicePDF, getOrderStatusColor, ORDER_STATUSES, formatDate, formatCurrency } from '../../utils/helpers';
 import { ZAP_COLORS } from '../../theme';
+import { useStore } from '../../context/StoreContext';
 
 const PAGE_SIZE = 15;
 
 const AdminOrders = () => {
   const navigate = useNavigate();
+  const { adminStore } = useStore();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -38,6 +40,7 @@ const AdminOrders = () => {
     try {
       const col = collection(db, COLLECTIONS.ORDERS);
       const constraints = [];
+      if (adminStore?.id) constraints.push(where('storeId', '==', adminStore.id));
       if (filter !== 'all') constraints.push(where('status', '==', filter));
       constraints.push(orderBy('createdAt', 'desc'));
 
@@ -65,7 +68,7 @@ const AdminOrders = () => {
   useEffect(() => {
     cursorsRef.current = [null];
     fetchOrders(0, statusFilter);
-  }, [statusFilter]);
+  }, [statusFilter, adminStore?.id]);
 
   const updateOrderStatus = async (orderId, newStatus) => {
     setUpdating(orderId);

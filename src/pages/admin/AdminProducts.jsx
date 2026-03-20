@@ -14,6 +14,7 @@ import {
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage, COLLECTIONS } from '../../firebase';
 import { ZAP_COLORS } from '../../theme';
+import { useStore } from '../../context/StoreContext';
 
 const PAGE_SIZE = 15;
 const EMPTY_PRODUCT = {
@@ -23,6 +24,7 @@ const EMPTY_PRODUCT = {
 };
 
 const AdminProducts = () => {
+  const { adminStore } = useStore();
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -49,6 +51,7 @@ const AdminProducts = () => {
     try {
       const col = collection(db, COLLECTIONS.PRODUCTS);
       const constraints = [orderBy('createdAt', 'desc')];
+      if (adminStore?.id) constraints.unshift(where('storeId', '==', adminStore.id));
 
       const countSnap = await getCountFromServer(query(col, ...constraints));
       setTotalPages(Math.ceil(countSnap.data().count / PAGE_SIZE));
@@ -68,7 +71,7 @@ const AdminProducts = () => {
     }
   }, []);
 
-  useEffect(() => { fetchProducts(0); }, []);
+  useEffect(() => { cursorsRef.current = [null]; fetchProducts(0); }, [adminStore?.id]);
 
   const openAdd = () => { setEditProduct(null); setForm(EMPTY_PRODUCT); setError(''); setDialog(true); };
   const openEdit = (p) => { setEditProduct(p); setForm({ ...EMPTY_PRODUCT, ...p }); setError(''); setDialog(true); };
@@ -103,6 +106,7 @@ const AdminProducts = () => {
     try {
       const data = {
         ...form,
+        storeId: adminStore?.id || null,
         mrp: parseFloat(form.mrp),
         discountedPrice: form.discountedPrice ? parseFloat(form.discountedPrice) : null,
         stock: parseInt(form.stock),

@@ -2,20 +2,23 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box, Container, Typography, Button, Paper, Radio, RadioGroup,
-  FormControlLabel, TextField, Dialog, DialogTitle, DialogContent,
-  DialogActions, CircularProgress, Divider, Chip, IconButton, Alert,
+  FormControlLabel, Dialog, DialogTitle, DialogContent,
+  CircularProgress, Divider, Chip, IconButton, Alert,
 } from '@mui/material';
-import { Add, LocationOn, ArrowBack, CheckCircle } from '@mui/icons-material';
+import { Add, ArrowBack, CheckCircle } from '@mui/icons-material';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
+import { useStore } from '../../context/StoreContext';
+import AddressForm, { EMPTY_ADDRESS } from '../../components/user/AddressForm';
 import { initiateRazorpayPayment } from '../../utils/helpers';
 import { ZAP_COLORS } from '../../theme';
 
 const Checkout = () => {
   const navigate = useNavigate();
   const { user, userProfile, addAddress } = useAuth();
+  const { activeUserStore } = useStore();
   const { items, coupon, subtotal, discount, deliveryCharge, total, clearCart } = useCart();
 
   const [selectedAddress, setSelectedAddress] = useState(userProfile?.addresses?.[0]?.id || '');
@@ -25,9 +28,9 @@ const Checkout = () => {
   const [orderPlaced, setOrderPlaced] = useState(null);
   const [error, setError] = useState('');
 
-  const [newAddress, setNewAddress] = useState({
-    label: 'Home', name: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '',
-  });
+  const [newAddress, setNewAddress] = useState(EMPTY_ADDRESS);
+  const [addressSaving, setAddressSaving] = useState(false);
+  const [addressError, setAddressError] = useState('');
 
   const address = userProfile?.addresses?.find((a) => a.id === selectedAddress);
 
@@ -40,6 +43,8 @@ const Checkout = () => {
       const orderData = {
         orderNumber,
         userId: user.uid,
+        storeId: activeUserStore?.id || null,
+        storeName: activeUserStore?.name || null,
         customerName: userProfile?.displayName || user.displayName || '',
         customerEmail: user.email,
         customerPhone: address.phone || userProfile?.phone || '',
@@ -98,13 +103,17 @@ const Checkout = () => {
   };
 
   const handleAddAddress = async () => {
+    setAddressSaving(true);
+    setAddressError('');
     try {
       const added = await addAddress(newAddress);
       setSelectedAddress(added.id);
       setAddressDialog(false);
-      setNewAddress({ label: 'Home', name: '', phone: '', line1: '', line2: '', city: '', state: '', pincode: '' });
+      setNewAddress(EMPTY_ADDRESS);
     } catch (err) {
-      setError(err.message);
+      setAddressError(err.message);
+    } finally {
+      setAddressSaving(false);
     }
   };
 
@@ -269,37 +278,18 @@ const Checkout = () => {
         </Box>
 
         {/* Add Address Dialog */}
-        <Dialog open={addressDialog} onClose={() => setAddressDialog(false)} maxWidth="sm" fullWidth>
+        <Dialog open={addressDialog} onClose={() => { setAddressDialog(false); setAddressError(''); }} maxWidth="sm" fullWidth>
           <DialogTitle sx={{ fontFamily: "'Syne', sans-serif", fontWeight: 700 }}>Add New Address</DialogTitle>
-          <DialogContent>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                {['Home', 'Work', 'Other'].map((l) => (
-                  <Chip
-                    key={l} label={l} size="small"
-                    onClick={() => setNewAddress((p) => ({ ...p, label: l }))}
-                    variant={newAddress.label === l ? 'filled' : 'outlined'}
-                    color={newAddress.label === l ? 'primary' : 'default'}
-                  />
-                ))}
-              </Box>
-              <Box sx={{ display: 'flex', gap: 1.5 }}>
-                <TextField label="Full Name" value={newAddress.name} onChange={(e) => setNewAddress((p) => ({ ...p, name: e.target.value }))} size="small" fullWidth required />
-                <TextField label="Phone" value={newAddress.phone} onChange={(e) => setNewAddress((p) => ({ ...p, phone: e.target.value }))} size="small" fullWidth required />
-              </Box>
-              <TextField label="Address Line 1" value={newAddress.line1} onChange={(e) => setNewAddress((p) => ({ ...p, line1: e.target.value }))} size="small" fullWidth required />
-              <TextField label="Address Line 2 (Optional)" value={newAddress.line2} onChange={(e) => setNewAddress((p) => ({ ...p, line2: e.target.value }))} size="small" fullWidth />
-              <Box sx={{ display: 'flex', gap: 1.5 }}>
-                <TextField label="City" value={newAddress.city} onChange={(e) => setNewAddress((p) => ({ ...p, city: e.target.value }))} size="small" fullWidth required />
-                <TextField label="State" value={newAddress.state} onChange={(e) => setNewAddress((p) => ({ ...p, state: e.target.value }))} size="small" fullWidth required />
-                <TextField label="Pincode" value={newAddress.pincode} onChange={(e) => setNewAddress((p) => ({ ...p, pincode: e.target.value }))} size="small" sx={{ width: 120 }} required />
-              </Box>
-            </Box>
+          <DialogContent sx={{ pt: 2 }}>
+            <AddressForm
+              value={newAddress}
+              onChange={setNewAddress}
+              onSave={handleAddAddress}
+              onCancel={() => { setAddressDialog(false); setAddressError(''); }}
+              saving={addressSaving}
+              error={addressError}
+            />
           </DialogContent>
-          <DialogActions sx={{ px: 3, pb: 2 }}>
-            <Button onClick={() => setAddressDialog(false)}>Cancel</Button>
-            <Button variant="contained" onClick={handleAddAddress}>Save Address</Button>
-          </DialogActions>
         </Dialog>
       </Container>
     </Box>

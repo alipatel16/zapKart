@@ -11,6 +11,7 @@ import { db, COLLECTIONS } from '../../firebase';
 import BannerCarousel from '../../components/user/BannerCarousel';
 import ProductCard, { ProductCardSkeleton } from '../../components/user/ProductCard';
 import { ZAP_COLORS } from '../../theme';
+import { useStore } from '../../context/StoreContext';
 
 const SectionHeader = ({ title, subtitle, onSeeAll, seeAllLabel = 'See all' }) => (
   <Box sx={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', mb: 2 }}>
@@ -87,6 +88,7 @@ const Home = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
+  const { activeUserStore } = useStore();
   const [banners, setBanners] = useState([]);
   const [categories, setCategories] = useState([]);
   const [featured, setFeatured] = useState([]);
@@ -97,12 +99,13 @@ const Home = () => {
   useEffect(() => {
     const fetchAll = async () => {
       try {
+        const storeId = activeUserStore?.id;
         const [bannersSnap, catsSnap, featuredSnap, exclusiveSnap, newArrivalSnap] = await Promise.all([
           getDocs(query(collection(db, COLLECTIONS.BANNERS), where('active', '==', true), orderBy('order'))),
           getDocs(query(collection(db, COLLECTIONS.CATEGORIES), where('active', '==', true), orderBy('order'))),
-          getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('isFeatured', '==', true), where('active', '==', true), limit(10))),
-          getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('isExclusive', '==', true), where('active', '==', true), limit(8))),
-          getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('isNewArrival', '==', true), where('active', '==', true), limit(8))),
+          getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('isFeatured', '==', true), where('active', '==', true), where('storeId', '==', storeId), limit(10))),
+          getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('isExclusive', '==', true), where('active', '==', true), where('storeId', '==', storeId), limit(8))),
+          getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('isNewArrival', '==', true), where('active', '==', true), where('storeId', '==', storeId), limit(8))),
         ]);
         setBanners(bannersSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
         setCategories(catsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -116,7 +119,7 @@ const Home = () => {
       }
     };
     fetchAll();
-  }, []);
+  }, [activeUserStore?.id]);
 
   return (
     <Box sx={{ pb: { xs: 9, md: 3 } }}>

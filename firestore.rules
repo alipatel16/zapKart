@@ -1,82 +1,131 @@
-// firestore.rules — Deploy with: firebase deploy --only firestore:rules
-
 rules_version = '2';
+
+// ================================================================
+// ZAP DELIVERY — FIRESTORE SECURITY RULES
+//
+// Data ownership model:
+//   GLOBAL  → banners, categories, coupons, settings, stores
+//   STORE-SCOPED → products, orders, purchases, inventory
+//
+// Read rules use least-privilege: only what the client needs.
+// Write rules require admin role for all sensitive collections.
+// ================================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isAuthenticated() {
+    // ── Helpers ──────────────────────────────────────────────
+    function isAuthed() {
       return request.auth != null;
     }
 
     function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+      return isAuthed() && request.auth.uid == userId;
     }
 
     function isAdmin() {
-      return isAuthenticated() &&
+      return isAuthed() &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
-    // USERS: Users can read/write their own profile. Admins can read all.
+    function incomingData() {
+      return request.resource.data;
+    }
+
+    // ── USERS ─────────────────────────────────────────────────
+    // Users can only read/write their own document.
+    // Admins can read all user documents.
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow read:   if isOwner(userId) || isAdmin();
+      allow create: if isAuthed() && request.auth.uid == userId;
       allow update: if isOwner(userId) || isAdmin();
       allow delete: if isAdmin();
     }
 
-    // PRODUCTS: Anyone can read active products. Only admins can write.
-    match /products/{productId} {
-      allow read: if true;
+    // ── STORES ────────────────────────────────────────────────
+    // GLOBAL — store list is public so the app can detect service
+    // area without the user being logged in.
+    match /stores/{storeId} {
+      allow read:  if true;
       allow write: if isAdmin();
     }
 
-    // CATEGORIES: Anyone can read active categories. Only admins can write.
+    // ── CATEGORIES ────────────────────────────────────────────
+    // GLOBAL — same category tree is shared across all stores.
+    // Category images are stored in Firebase Storage /categories/
     match /categories/{categoryId} {
-      allow read: if true;
+      allow read:  if true;
       allow write: if isAdmin();
     }
 
-    // BANNERS: Anyone can read active banners. Only admins can write.
+    // ── BANNERS ───────────────────────────────────────────────
+    // GLOBAL — marketing banners / carousel images are app-wide
+    // campaigns, not tied to any individual store.
+    // Banner images are stored in Firebase Storage /banners/
     match /banners/{bannerId} {
-      allow read: if true;
+      allow read:  if true;
       allow write: if isAdmin();
     }
 
-    // COUPONS: Authenticated users can read active coupons. Only admins can write.
+    // ── COUPONS ───────────────────────────────────────────────
+    // GLOBAL — coupon codes work across all stores.
+    // Authenticated users can read active coupons to validate them.
     match /coupons/{couponId} {
-      allow read: if isAuthenticated();
+      allow read:  if isAuthed();
       allow write: if isAdmin();
     }
 
-    // ORDERS: Users can create and read their own orders. Admins can read/write all.
+    // ── SETTINGS ──────────────────────────────────────────────
+    // GLOBAL — app-wide config (delivery charge, free delivery
+    // threshold, app name, etc.)
+    match /settings/{settingId} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
+    // ── PRODUCTS ──────────────────────────────────────────────
+    // STORE-SCOPED — availability and stock differ per store.
+    // Product images are stored in Firebase Storage /products/
+    // Public read: anyone can browse the product catalogue.
+    match /products/{productId} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
+    // ── ORDERS ────────────────────────────────────────────────
+    // STORE-SCOPED — each order belongs to one store.
+    // Users can only read/create their own orders.
+    // Users can cancel their own order only if status == 'placed'.
+    // Admins can read/update/delete any order.
     match /orders/{orderId} {
-      allow read: if isAuthenticated() &&
+      allow read: if isAuthed() &&
         (request.auth.uid == resource.data.userId || isAdmin());
-      allow create: if isAuthenticated() &&
-        request.auth.uid == request.resource.data.userId;
+
+      allow create: if isAuthed() &&
+        request.auth.uid == incomingData().userId &&
+        incomingData().storeId != null;   // must have a storeId
+
       allow update: if isAdmin() ||
-        (isAuthenticated() && request.auth.uid == resource.data.userId
-          && resource.data.status == 'placed'
-          && request.resource.data.status == 'cancelled');
+        (isAuthed() &&
+         request.auth.uid == resource.data.userId &&
+         resource.data.status == 'placed' &&
+         incomingData().status == 'cancelled');
+
       allow delete: if isAdmin();
     }
 
-    // PURCHASES: Only admins can read/write.
+    // ── PURCHASES ─────────────────────────────────────────────
+    // STORE-SCOPED — purchase records are per store.
+    // Only admins can read or write purchase records.
     match /purchases/{purchaseId} {
       allow read, write: if isAdmin();
     }
 
-    // INVENTORY: Only admins can read/write.
+    // ── INVENTORY ─────────────────────────────────────────────
+    // STORE-SCOPED — stock levels are per store.
+    // Only admins can manage inventory.
     match /inventory/{itemId} {
       allow read, write: if isAdmin();
-    }
-
-    // SETTINGS: Anyone can read. Only admins can write.
-    match /settings/{settingId} {
-      allow read: if true;
-      allow write: if isAdmin();
     }
   }
 }

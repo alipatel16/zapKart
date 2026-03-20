@@ -13,10 +13,12 @@ import {
 import { db, COLLECTIONS } from '../../firebase';
 import { formatDate, formatCurrency } from '../../utils/helpers';
 import { ZAP_COLORS } from '../../theme';
+import { useStore } from '../../context/StoreContext';
 
 const PAGE_SIZE = 15;
 
 const AdminPurchases = () => {
+  const { adminStore } = useStore();
   const [purchases, setPurchases] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -85,6 +87,7 @@ const AdminPurchases = () => {
     try {
       const purchaseData = {
         ...form,
+        storeId: adminStore?.id || null,
         items: form.items.map((i) => ({ ...i, quantity: parseInt(i.quantity), costPrice: parseFloat(i.costPrice) })),
         totalCost,
         createdAt: serverTimestamp(),

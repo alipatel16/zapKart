@@ -10,11 +10,13 @@ import {
 } from '@mui/material';
 import { Add, Edit, Delete, CloudUpload } from '@mui/icons-material';
 import {
-  collection, where, query, orderBy, getDocs, doc, addDoc, updateDoc, deleteDoc, serverTimestamp,
+  collection, query, orderBy, getDocs, doc, addDoc, updateDoc, deleteDoc, serverTimestamp,
+  where,
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage, COLLECTIONS } from '../../firebase';
 import { ZAP_COLORS } from '../../theme';
+import { useStore } from '../../context/StoreContext';
 
 // ============================================================
 // ADMIN INVENTORY
@@ -150,6 +152,7 @@ export const AdminCategories = () => {
 };
 
 export const AdminInventory = () => {
+  const { adminStore } = useStore();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editId, setEditId] = useState(null);
@@ -159,7 +162,10 @@ export const AdminInventory = () => {
   useEffect(() => {
     const fetch = async () => {
       setLoading(true);
-      const snap = await getDocs(query(collection(db, COLLECTIONS.PRODUCTS), orderBy('name')));
+      const q = adminStore?.id
+        ? query(collection(db, COLLECTIONS.PRODUCTS), where('storeId', '==', adminStore.id), orderBy('name'))
+        : query(collection(db, COLLECTIONS.PRODUCTS), orderBy('name'));
+      const snap = await getDocs(q);
       setProducts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setLoading(false);
     };
@@ -227,6 +233,7 @@ export const AdminInventory = () => {
 };
 
 export const AdminSalesReport = () => {
+  const { adminStore } = useStore();
   const [startDate, setStartDate] = useState(dayjs().startOf('month'));
   const [endDate, setEndDate] = useState(dayjs());
   const [orders, setOrders] = useState([]);
@@ -238,12 +245,13 @@ export const AdminSalesReport = () => {
     try {
       const start = Timestamp.fromDate(startDate.toDate());
       const end = Timestamp.fromDate(endDate.endOf('day').toDate());
-      const snap = await getDocs(query(
-        collection(db, COLLECTIONS.ORDERS),
+      const orderConstraints = [
         where('createdAt', '>=', start),
         where('createdAt', '<=', end),
         orderBy('createdAt', 'desc'),
-      ));
+      ];
+      if (adminStore?.id) orderConstraints.unshift(where('storeId', '==', adminStore.id));
+      const snap = await getDocs(query(collection(db, COLLECTIONS.ORDERS), ...orderConstraints));
       const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setOrders(docs);
       const total = docs.reduce((s, o) => s + (o.total || 0), 0);

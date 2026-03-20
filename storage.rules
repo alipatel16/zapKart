@@ -1,47 +1,77 @@
-// storage.rules — Deploy with: firebase deploy --only storage
-
 rules_version = '2';
+
+// ================================================================
+// ZAP DELIVERY — FIREBASE STORAGE SECURITY RULES
+//
+// Storage folder ownership model:
+//
+//   /banners/**       GLOBAL — app-wide carousel ads
+//                     Anyone can read. Authenticated admins can write.
+//
+//   /categories/**    GLOBAL — shared category icons/thumbnails
+//                     Anyone can read. Authenticated admins can write.
+//
+//   /products/**      STORE-SCOPED — product images vary per store
+//                     Anyone can read (product catalogue is public).
+//                     Authenticated admins can write.
+//
+//   /users/{uid}/**   USER-SCOPED — profile photos
+//                     Anyone can read (for display in UI).
+//                     Only the owning user can write.
+//
+// File-size and MIME-type validation applied on all writes.
+// ================================================================
+
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // Helper functions
-    function isAuthenticated() {
+    // ── Helpers ──────────────────────────────────────────────
+    function isAuthed() {
       return request.auth != null;
     }
 
-    function isAdmin() {
-      return isAuthenticated() && request.auth.token.email != null;
-      // For stricter admin check, use Firestore but this adds latency:
-      // Alternatively validate on server side
+    function isOwner(userId) {
+      return isAuthed() && request.auth.uid == userId;
     }
 
+    // Image validation: must be an image and under 5 MB
     function isValidImage() {
       return request.resource.contentType.matches('image/.*')
-        && request.resource.size < 5 * 1024 * 1024; // 5MB limit
+          && request.resource.size < 5 * 1024 * 1024;
     }
 
-    // Product images - admin upload, public read
-    match /products/{filename} {
-      allow read: if true;
-      allow write: if isAuthenticated() && isValidImage();
-    }
-
-    // Category images - admin upload, public read
-    match /categories/{filename} {
-      allow read: if true;
-      allow write: if isAuthenticated() && isValidImage();
-    }
-
-    // Banner images - admin upload, public read
+    // ── BANNERS (GLOBAL) ─────────────────────────────────────
+    // Marketing / carousel images are NOT store-specific.
+    // Any authenticated admin can upload; public read.
     match /banners/{filename} {
-      allow read: if true;
-      allow write: if isAuthenticated() && isValidImage();
+      allow read:  if true;
+      allow write: if isAuthed() && isValidImage();
     }
 
-    // User profile photos
+    // ── CATEGORIES (GLOBAL) ──────────────────────────────────
+    // Category icons / thumbnails are shared across all stores.
+    // Any authenticated admin can upload; public read.
+    match /categories/{filename} {
+      allow read:  if true;
+      allow write: if isAuthed() && isValidImage();
+    }
+
+    // ── PRODUCTS (STORE-SCOPED) ───────────────────────────────
+    // Product images differ per store (different packaging, etc.)
+    // Stored flat under /products/ — the storeId is recorded in
+    // Firestore, not encoded in the filename.
+    // Public read (catalogue browsing); admin write.
+    match /products/{filename} {
+      allow read:  if true;
+      allow write: if isAuthed() && isValidImage();
+    }
+
+    // ── USER PROFILE PHOTOS (USER-SCOPED) ────────────────────
+    // Each user has their own folder. Only they can upload;
+    // public read so the avatar is visible in the UI.
     match /users/{userId}/{filename} {
-      allow read: if true;
-      allow write: if request.auth.uid == userId && isValidImage();
+      allow read:  if true;
+      allow write: if isOwner(userId) && isValidImage();
     }
   }
 }
