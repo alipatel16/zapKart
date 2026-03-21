@@ -3,6 +3,7 @@ import { getFirestore } from 'firebase/firestore';
 import { getAuth, GoogleAuthProvider, FacebookAuthProvider } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 import { getAnalytics } from 'firebase/analytics';
+import { getPerformance } from 'firebase/performance';
 
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
@@ -20,6 +21,7 @@ export const db = getFirestore(app);
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const analytics = typeof window !== 'undefined' ? getAnalytics(app) : null;
+export const performance = typeof window !== 'undefined' ? getPerformance(app) : null;
 
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.addScope('email');
@@ -43,7 +45,8 @@ export const COLLECTIONS = {
   PURCHASE: 'purchases',
   INVENTORY: 'inventory',
   SETTINGS: 'settings',
-  STORES: 'stores',         // NEW: store/warehouse locations
+  STORES: 'stores',
+  FCM_TOKENS: 'fcmTokens',  // FCM push notification tokens
 };
 
 // ============================================================

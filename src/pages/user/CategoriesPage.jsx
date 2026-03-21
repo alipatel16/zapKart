@@ -29,7 +29,7 @@ const CategoriesPage = () => {
       <Container maxWidth="lg">
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2.5, px: { xs: 1, sm: 0 } }}>
           <IconButton onClick={() => navigate(-1)} size="small"><ArrowBack /></IconButton>
-          <Typography variant="h6" fontWeight={800} sx={{ fontFamily: "'Syne', sans-serif" }}>
+          <Typography variant="h6" fontWeight={700}>
             All Categories
           </Typography>
         </Box>

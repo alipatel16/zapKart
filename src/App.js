@@ -6,6 +6,8 @@ import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import { StoreProvider } from './context/StoreContext';
 import ActiveOrdersBar from './components/user/ActiveOrdersBar';
+import ErrorBoundary from './components/ErrorBoundary';
+import { useNotifications } from './hooks/useNotifications';
 
 // ── Common ───────────────────────────────────────────────────────────────────
 const Header        = lazy(() => import('./components/common/Header'));
@@ -51,6 +53,9 @@ const AdminBanners = lazy(() =>
 const AdminCoupons = lazy(() =>
   import('./pages/admin/AdminBannersAndCoupons').then((m) => ({ default: m.AdminCoupons }))
 );
+
+// ── Notifications initializer (hook must be inside providers) ────────────────
+const NotificationsInit = () => { useNotifications(); return null; };
 
 // ── Loading screen ────────────────────────────────────────────────────────────
 const LoadingScreen = () => (
@@ -112,9 +117,11 @@ function App() {
           CartProvider   — cart state
           Router         — React Router
       */}
+      <ErrorBoundary>
       <AuthProvider>
         <StoreProvider>
           <CartProvider>
+            <NotificationsInit />
             <Router>
               <Suspense fallback={<LoadingScreen />}>
                 <Routes>
@@ -161,6 +168,7 @@ function App() {
           </CartProvider>
         </StoreProvider>
       </AuthProvider>
+      </ErrorBoundary>
     </ThemeProvider>
   );
 }

@@ -1,28 +1,26 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Box, Typography, Paper, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Chip, Select, MenuItem,
   Button, TextField, InputAdornment, Dialog, DialogTitle,
   DialogContent, DialogActions, CircularProgress, Tabs, Tab, IconButton,
-  FormControl, InputLabel, Alert,
+  FormControl, Alert,
 } from '@mui/material';
 import {
   Search, Download, Visibility, CheckCircle,
 } from '@mui/icons-material';
 import {
   collection, query, where, orderBy, getDocs, doc,
-  updateDoc, serverTimestamp, limit, startAfter, getCountFromServer,
+  updateDoc, getDoc, serverTimestamp, limit, startAfter, getCountFromServer,
 } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
-import { generateInvoicePDF, getOrderStatusColor, ORDER_STATUSES, formatDate, formatCurrency } from '../../utils/helpers';
+import { generateInvoicePDF, getOrderStatusColor, ORDER_STATUSES, formatDate } from '../../utils/helpers';
 import { ZAP_COLORS } from '../../theme';
 import { useStore } from '../../context/StoreContext';
 
 const PAGE_SIZE = 15;
 
 const AdminOrders = () => {
-  const navigate = useNavigate();
   const { adminStore } = useStore();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -74,15 +72,22 @@ const AdminOrders = () => {
     setUpdating(orderId);
     try {
       const ref = doc(db, COLLECTIONS.ORDERS, orderId);
+      // Always read fresh statusHistory from Firestore to avoid overwriting
+      // entries added by the user (e.g. user cancellation) from stale local state.
+      const freshSnap = await getDoc(ref);
+      const freshHistory = freshSnap.exists() ? (freshSnap.data().statusHistory || []) : [];
       await updateDoc(ref, {
         status: newStatus,
-        [`statusHistory`]: [...(orders.find((o) => o.id === orderId)?.statusHistory || []),
-          { status: newStatus, timestamp: new Date().toISOString() }],
+        statusHistory: [...freshHistory, { status: newStatus, timestamp: new Date().toISOString() }],
         updatedAt: serverTimestamp(),
       });
       setOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, status: newStatus } : o));
       setSuccessMsg(`Order status updated to "${newStatus}"`);
       setTimeout(() => setSuccessMsg(''), 3000);
+    } catch (err) {
+      console.error('updateOrderStatus error:', err);
+      setSuccessMsg('');
+      alert(`Failed to update status: ${err.message}`);
     } finally {
       setUpdating('');
     }
@@ -196,23 +201,37 @@ const AdminOrders = () => {
                   </TableCell>
                   <TableCell>
                     <FormControl size="small" sx={{ minWidth: 130 }}>
-                      <Select
-                        value={order.status}
-                        onChange={(e) => updateOrderStatus(order.id, e.target.value)}
-                        disabled={updating === order.id}
-                        sx={{ fontSize: '0.75rem', borderRadius: 2, color: statusColor,
-                          '& .MuiOutlinedInput-notchedOutline': { borderColor: `${statusColor}40` },
-                        }}
-                      >
-                        {ORDER_STATUSES.map((s) => (
-                          <MenuItem key={s.key} value={s.key} sx={{ fontSize: '0.8rem' }}>
-                            {s.icon} {s.label}
+                      {order.status === 'cancelled' || order.status === 'delivered' ? (
+                        // Terminal states — no further status changes allowed
+                        <Chip
+                          label={order.status === 'cancelled' ? '❌ Cancelled' : '✅ Delivered'}
+                          size="small"
+                          sx={{
+                            fontSize: '0.72rem',
+                            background: `${statusColor}18`,
+                            color: statusColor,
+                            fontWeight: 600,
+                          }}
+                        />
+                      ) : (
+                        <Select
+                          value={order.status}
+                          onChange={(e) => updateOrderStatus(order.id, e.target.value)}
+                          disabled={updating === order.id}
+                          sx={{ fontSize: '0.75rem', borderRadius: 2, color: statusColor,
+                            '& .MuiOutlinedInput-notchedOutline': { borderColor: `${statusColor}40` },
+                          }}
+                        >
+                          {ORDER_STATUSES.map((s) => (
+                            <MenuItem key={s.key} value={s.key} sx={{ fontSize: '0.8rem' }}>
+                              {s.icon} {s.label}
+                            </MenuItem>
+                          ))}
+                          <MenuItem value="cancelled" sx={{ fontSize: '0.8rem', color: ZAP_COLORS.error }}>
+                            ❌ Cancel Order
                           </MenuItem>
-                        ))}
-                        <MenuItem value="cancelled" sx={{ fontSize: '0.8rem', color: ZAP_COLORS.error }}>
-                          ❌ Cancel
-                        </MenuItem>
-                      </Select>
+                        </Select>
+                      )}
                     </FormControl>
                   </TableCell>
                   <TableCell sx={{ fontSize: '0.72rem', color: ZAP_COLORS.textMuted, whiteSpace: 'nowrap' }}>

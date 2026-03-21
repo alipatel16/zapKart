@@ -237,6 +237,10 @@ service-worker.js
 
 # Web App Manifest
 manifest.json
+# public/firebase-messaging-sw.js
+# firestore.indexes.json
+# firestore.rules
+# storage.rules
 
 # Workbox
 workbox-config.js

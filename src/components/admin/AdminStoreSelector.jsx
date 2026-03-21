@@ -9,11 +9,13 @@ import { Store, FlashOn, Add } from '@mui/icons-material';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
 import { useStore } from '../../context/StoreContext';
+import { useAuth } from '../../context/AuthContext';
 import { ZAP_COLORS } from '../../theme';
 
 const AdminStoreSelector = ({ open, onClose, required = false }) => {
   const navigate = useNavigate();
   const { adminStore, setAdminStore } = useStore();
+  const { updateUserProfile } = useAuth();
   const [stores, setStores] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(adminStore?.id || '');
@@ -41,10 +43,17 @@ const AdminStoreSelector = ({ open, onClose, required = false }) => {
     fetchStores();
   }, [open]);
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     const store = stores.find((s) => s.id === selected);
     if (!store) return;
     setAdminStore(store);
+    // Save adminStoreId to Firestore so FCM tokens are tagged correctly
+    // for push notifications. This is what routes order alerts to the right admin.
+    try {
+      await updateUserProfile({ adminStoreId: store.id });
+    } catch (err) {
+      console.warn('Could not save adminStoreId to profile:', err.message);
+    }
     onClose?.();
   };
 
