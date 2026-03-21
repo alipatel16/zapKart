@@ -344,7 +344,7 @@ const Header = () => {
 
         <List sx={{ px: 1 }}>
           {navItems.map((item) => (
-            <ListItemButton key={item.path} onClick={() => { navigate(item.path); setDrawerOpen(false); }} sx={{ borderRadius: 2, mb: 0.5, background: location.pathname === item.path ? `${ZAP_COLORS.primary}20` : 'transparent', color: location.pathname === item.path ? ZAP_COLORS.primary : 'rgba(255,255,255,0.8)', '&:hover': { background: `${ZAP_COLORS.primary}15` } }}>
+            <ListItemButton key={item.path} onClick={() => { setDrawerOpen(false); setTimeout(() => {navigate(item.path);}) }} sx={{ borderRadius: 2, mb: 0.5, background: location.pathname === item.path ? `${ZAP_COLORS.primary}20` : 'transparent', color: location.pathname === item.path ? ZAP_COLORS.primary : 'rgba(255,255,255,0.8)', '&:hover': { background: `${ZAP_COLORS.primary}15` } }}>
               <ListItemIcon sx={{ color: 'inherit', minWidth: 40 }}>{item.icon}</ListItemIcon>
               <ListItemText primary={item.label} primaryTypographyProps={{ fontWeight: 500, fontSize: '0.9rem' }} />
             </ListItemButton>
@@ -358,7 +358,7 @@ const Header = () => {
             { label: 'Privacy Policy', path: '/privacy' },
             { label: 'Terms & Conditions', path: '/terms' },
           ].map((item) => (
-            <ListItemButton key={item.path} onClick={() => { navigate(item.path); setDrawerOpen(false); }} sx={{ borderRadius: 2, mb: 0.3, color: 'rgba(255,255,255,0.55)', '&:hover': { background: `${ZAP_COLORS.primary}15`, color: '#fff' } }}>
+            <ListItemButton key={item.path} onClick={() => { setDrawerOpen(false); setTimeout(() => {navigate(item.path);}) }} sx={{ borderRadius: 2, mb: 0.3, color: 'rgba(255,255,255,0.55)', '&:hover': { background: `${ZAP_COLORS.primary}15`, color: '#fff' } }}>
               <ListItemText primary={item.label} primaryTypographyProps={{ fontSize: '0.82rem' }} />
             </ListItemButton>
           ))}

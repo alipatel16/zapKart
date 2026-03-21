@@ -144,7 +144,7 @@ const AdminLayout = () => {
               {/* span wrapper needed so Tooltip can attach its ref when child is a button */}
               <span style={{ display: 'block', marginBottom: 2 }}>
                 <ListItemButton
-                  onClick={() => { navigate(item.path); if (isMobile) setDrawerOpen(false); }}
+                  onClick={() => { if (isMobile) setDrawerOpen(false); setTimeout(() => {navigate(item.path);})}}
                   sx={{
                     borderRadius: 2,
                     background: active ? `${ZAP_COLORS.primary}25` : 'transparent',

@@ -28,6 +28,8 @@ const HelpPage      = lazy(() => import('./pages/user/InfoPages').then(m => ({ d
 const AboutPage     = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.AboutPage })));
 const PrivacyPage   = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.PrivacyPage })));
 const TermsPage     = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.TermsPage })));
+const MapAddressPicker = lazy(() => import('./pages/user/MapAddressPicker'));
+const AddressDetails   = lazy(() => import('./pages/user/AddressDetails'));
 
 // ── Admin pages ───────────────────────────────────────────────────────────────
 const AdminLayout    = lazy(() => import('./pages/admin/AdminLayout'));
@@ -138,6 +140,8 @@ function App() {
                   <Route path="/products"     element={<UserLayout><CategoryPage /></UserLayout>} />
                   <Route path="/search"       element={<UserLayout><CategoryPage /></UserLayout>} />
                   <Route path="/profile"      element={<UserLayout><Profile /></UserLayout>} />
+                  <Route path="/add-address"   element={<MapAddressPicker />} />
+                  <Route path="/address-details" element={<AddressDetails />} />
                   <Route path="/help"         element={<UserLayout><HelpPage /></UserLayout>} />
                   <Route path="/about"        element={<UserLayout><AboutPage /></UserLayout>} />
                   <Route path="/privacy"      element={<UserLayout><PrivacyPage /></UserLayout>} />
