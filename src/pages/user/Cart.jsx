@@ -97,9 +97,9 @@ const Cart = () => {
           {/* Items list */}
           <Box sx={{ flex: 1 }}>
             {/* Savings strip */}
-            {savings > 0 && (
+            {(savings + discount) > 0 && (
               <Alert icon="🎉" severity="success" sx={{ mb: 2, borderRadius: 2 }}>
-                You're saving <strong>₹{savings}</strong> on this order!
+                You're saving <strong>₹{savings + discount}</strong> on this order!
               </Alert>
             )}
 

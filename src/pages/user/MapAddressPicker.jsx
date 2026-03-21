@@ -10,8 +10,7 @@ import { ZAP_COLORS } from '../../theme';
 
 const GMAP_KEY = process.env.REACT_APP_GOOGLE_MAPS_KEY;
 
-// ── How far pin must move before we re-reverse-geocode ────────────────────
-const REVERSE_THRESHOLD_KM = 0.03; // ~30 metres
+const REVERSE_THRESHOLD_KM = 0.03;
 
 // ── Load Google Maps JS API once (with Places library) ───────────────────
 let gmapsPromise = null;
@@ -39,54 +38,44 @@ const MapAddressPicker = () => {
 
   const from = new URLSearchParams(location.search).get('from') || 'checkout';
 
-  // Map DOM ref + instance
-  const mapDivRef      = useRef(null);
-  const mapInstanceRef = useRef(null);
-
-  // Google API service instances (created once after Maps loads)
-  const geocoderRef        = useRef(null);
-  const autocompleteRef    = useRef(null); // AutocompleteService instance
-  const sessionTokenRef    = useRef(null); // current session token
+  const mapDivRef         = useRef(null);
+  const mapInstanceRef    = useRef(null);
+  const geocoderRef       = useRef(null);
+  const autocompleteRef   = useRef(null);
+  const sessionTokenRef   = useRef(null);
 
   // Refs so idle listener never goes stale
-  const allStoresRef       = useRef(allStores);
-  const serviceRadiusRef   = useRef(SERVICE_RADIUS_KM);
-  useEffect(() => { allStoresRef.current     = allStores;       }, [allStores]);
+  const allStoresRef     = useRef(allStores);
+  const serviceRadiusRef = useRef(SERVICE_RADIUS_KM);
+  useEffect(() => { allStoresRef.current     = allStores;        }, [allStores]);
   useEffect(() => { serviceRadiusRef.current = SERVICE_RADIUS_KM; }, [SERVICE_RADIUS_KM]);
 
-  // Last reverse-geocoded position (to skip near-identical calls)
   const lastReversedRef = useRef(null);
   const reverseTimer    = useRef(null);
   const searchTimer     = useRef(null);
 
-  // ── Component state ───────────────────────────────────────────────────────
-  const [mapReady,    setMapReady]    = useState(false);
-  const [mapError,    setMapError]    = useState('');
-  const [center,      setCenter]      = useState({
+  const [mapReady,      setMapReady]      = useState(false);
+  const [mapError,      setMapError]      = useState('');
+  const [center,        setCenter]        = useState({
     lat: userLocation?.lat || 20.5937,
     lng: userLocation?.lng || 78.9629,
   });
-  const [areaName,    setAreaName]    = useState('');
-  const [cityName,    setCityName]    = useState('');
-  const [nearbyStore, setNearbyStore] = useState(null);
-  const [isReversing, setIsReversing] = useState(false);
-
+  const [areaName,      setAreaName]      = useState('');
+  const [cityName,      setCityName]      = useState('');
+  const [nearbyStore,   setNearbyStore]   = useState(null);
+  const [isReversing,   setIsReversing]   = useState(false);
   const [searchText,    setSearchText]    = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [showResults,   setShowResults]   = useState(false);
   const [searching,     setSearching]     = useState(false);
 
-  // ── Rotate session token — call this after user picks a result ───────────
-  // Each token groups all autocomplete requests in one search into a single
-  // billable event. Rotating after selection starts a fresh billing session.
   const rotateSessionToken = useCallback(() => {
     if (!window.google?.maps?.places) return;
     sessionTokenRef.current = new window.google.maps.places.AutocompleteSessionToken();
   }, []);
 
-  // ── Stable reverse-geocode (reads from refs, created once) ───────────────
+  // ── Stable reverse geocode (empty deps, reads via refs) ──────────────────
   const doReverse = useCallback(async (lat, lng) => {
-    // Skip if pin hasn't moved meaningfully
     if (lastReversedRef.current) {
       const moved = getDistanceKm(lat, lng, lastReversedRef.current.lat, lastReversedRef.current.lng);
       if (moved < REVERSE_THRESHOLD_KM) return;
@@ -94,47 +83,24 @@ const MapAddressPicker = () => {
     lastReversedRef.current = { lat, lng };
     setIsReversing(true);
 
-    // ── Google Geocoder reverse lookup ────────────────────────────────────
     const geocoder = geocoderRef.current;
     if (!geocoder) { setIsReversing(false); return; }
 
     geocoder.geocode({ location: { lat, lng } }, (results, status) => {
       if (status === 'OK' && results?.length) {
-        // Walk the address_components for suburb/area and city
         let area = '';
         let city = '';
-
         for (const result of results) {
-          const comps = result.address_components || [];
-
-          for (const comp of comps) {
-            const types = comp.types;
-
-            // Area: sublocality_level_2 > sublocality_level_1 > sublocality > neighborhood
-            if (!area && (
-              types.includes('sublocality_level_2') ||
-              types.includes('sublocality_level_1') ||
-              types.includes('sublocality') ||
-              types.includes('neighborhood')
-            )) {
+          for (const comp of result.address_components || []) {
+            const t = comp.types;
+            if (!area && (t.includes('sublocality_level_2') || t.includes('sublocality_level_1') || t.includes('sublocality') || t.includes('neighborhood')))
               area = comp.long_name;
-            }
-
-            // City: locality > administrative_area_level_2
-            if (!city && (
-              types.includes('locality') ||
-              types.includes('administrative_area_level_2')
-            )) {
+            if (!city && (t.includes('locality') || t.includes('administrative_area_level_2')))
               city = comp.long_name;
-            }
           }
-
-          if (area && city) break; // found both, stop
+          if (area && city) break;
         }
-
-        // Fallback: use the formatted address first line
         if (!area) area = results[0].formatted_address.split(',')[0];
-
         setAreaName(area || 'Unknown area');
         setCityName(city || '');
       } else {
@@ -142,21 +108,19 @@ const MapAddressPicker = () => {
         setCityName('');
       }
 
-      // Find nearest store
       let found = null;
       for (const store of allStoresRef.current) {
         if (!store.lat || !store.lng) continue;
         if (getDistanceKm(lat, lng, store.lat, store.lng) <= (store.deliveryRadiusKm || serviceRadiusRef.current)) {
-          found = store;
-          break;
+          found = store; break;
         }
       }
       setNearbyStore(found);
       setIsReversing(false);
     });
-  }, []); // empty deps — reads everything from refs
+  }, []);
 
-  // ── Init Google Map (runs once) ───────────────────────────────────────────
+  // ── Init Google Map ───────────────────────────────────────────────────────
   useEffect(() => {
     let alive = true;
     const startLat = userLocation?.lat || 20.5937;
@@ -167,25 +131,29 @@ const MapAddressPicker = () => {
         if (!alive || !mapDivRef.current || mapInstanceRef.current) return;
 
         const google = window.google;
-
-        // Instantiate reusable service objects
         geocoderRef.current     = new google.maps.Geocoder();
         autocompleteRef.current = new google.maps.places.AutocompleteService();
-        rotateSessionToken(); // create the first session token
+        rotateSessionToken();
 
         const map = new google.maps.Map(mapDivRef.current, {
-          center:            { lat: startLat, lng: startLng },
-          zoom:              17,
-          disableDefaultUI:  false,
-          zoomControl:       true,
+          center:           { lat: startLat, lng: startLng },
+          zoom:             17,
+          disableDefaultUI: false,
+          gestureHandling:  'greedy',
+          clickableIcons:   true,
           mapTypeControl:    false,
           streetViewControl: false,
           fullscreenControl: false,
-          gestureHandling:   'greedy', // single-finger pan on mobile
-          clickableIcons:    true,
+
+          // ── FIX: move zoom control to BOTTOM LEFT ────────────────────────
+          // Default is RIGHT_BOTTOM which clashes with our FAB on the right.
+          // Moving it to LEFT_BOTTOM gives the FAB the entire right side.
+          zoomControl: true,
+          zoomControlOptions: {
+            position: google.maps.ControlPosition.LEFT_BOTTOM,
+          },
         });
 
-        // idle fires when map finishes panning/zooming
         map.addListener('idle', () => {
           const c   = map.getCenter();
           const lat = c.lat();
@@ -209,9 +177,9 @@ const MapAddressPicker = () => {
       geocoderRef.current     = null;
       autocompleteRef.current = null;
     };
-  }, []); // runs once
+  }, []);
 
-  // ── Autocomplete search with debounce ─────────────────────────────────────
+  // ── Autocomplete search ───────────────────────────────────────────────────
   useEffect(() => {
     clearTimeout(searchTimer.current);
     const q = searchText.trim();
@@ -222,14 +190,11 @@ const MapAddressPicker = () => {
       if (!svc) return;
       setSearching(true);
 
-      // Bias results to the current map viewport
-      const map = mapInstanceRef.current;
+      const map     = mapInstanceRef.current;
       const request = {
-        input:        q,
-        // Restrict to India
+        input:                 q,
         componentRestrictions: { country: 'in' },
-        sessionToken: sessionTokenRef.current,
-        // If map is ready, bias to its current bounds
+        sessionToken:          sessionTokenRef.current,
         ...(map ? { bounds: map.getBounds() || undefined } : {}),
       };
 
@@ -237,11 +202,9 @@ const MapAddressPicker = () => {
         setSearching(false);
         if (status === window.google.maps.places.PlacesServiceStatus.OK && predictions?.length) {
           setSearchResults(predictions.map((p) => ({
-            placeId:     p.place_id,
-            // main_text is the primary name (street/area), secondary is city etc.
-            short:       p.structured_formatting?.main_text || p.description,
-            secondary:   p.structured_formatting?.secondary_text || '',
-            description: p.description,
+            placeId:   p.place_id,
+            short:     p.structured_formatting?.main_text     || p.description,
+            secondary: p.structured_formatting?.secondary_text || '',
           })));
           setShowResults(true);
         } else {
@@ -252,28 +215,23 @@ const MapAddressPicker = () => {
     }, 400);
   }, [searchText]);
 
-  // ── User picks a suggestion — resolve Place ID to lat/lng ────────────────
+  // ── Pick a suggestion ─────────────────────────────────────────────────────
   const handleSelectResult = useCallback((result) => {
     if (!mapInstanceRef.current || !geocoderRef.current) return;
-
-    // Rotate token BEFORE geocoding — this closes the session and
-    // the Place Details/Geocode call is billed as the session-terminating call
     rotateSessionToken();
-
     geocoderRef.current.geocode({ placeId: result.placeId }, (res, status) => {
       if (status === 'OK' && res?.[0]) {
         const loc = res[0].geometry.location;
-        lastReversedRef.current = null; // force fresh reverse on next idle
+        lastReversedRef.current = null;
         mapInstanceRef.current.setCenter(loc);
         mapInstanceRef.current.setZoom(18);
       }
     });
-
     setSearchText(result.short);
     setShowResults(false);
   }, [rotateSessionToken]);
 
-  // ── GPS re-center ─────────────────────────────────────────────────────────
+  // ── GPS re-centre ─────────────────────────────────────────────────────────
   const handleMyLocation = () => {
     if (!navigator.geolocation || !mapInstanceRef.current) return;
     navigator.geolocation.getCurrentPosition(
@@ -287,14 +245,13 @@ const MapAddressPicker = () => {
     );
   };
 
-  // ── Confirm ────────────────────────────────────────────────────────────────
+  // ── Confirm ───────────────────────────────────────────────────────────────
   const handleConfirm = () => {
     navigate('/address-details', {
       state: { lat: center.lat, lng: center.lng, area: areaName, city: cityName, from },
     });
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <Box sx={{ position: 'fixed', inset: 0, zIndex: 1300, display: 'flex', flexDirection: 'column', background: '#eee' }}>
 
@@ -340,7 +297,7 @@ const MapAddressPicker = () => {
           )}
         </Paper>
 
-        {/* Autocomplete dropdown */}
+        {/* Dropdown */}
         {showResults && searchResults.length > 0 && (
           <Paper elevation={4} sx={{
             position: 'absolute', left: 12, right: 12, top: 'calc(100% - 2px)',
@@ -366,13 +323,11 @@ const MapAddressPicker = () => {
                 </Box>
               </Box>
             ))}
-
             {/* Required Google attribution */}
             <Box sx={{ px: 2, py: 0.8, display: 'flex', justifyContent: 'flex-end', borderTop: `1px solid ${ZAP_COLORS.border}` }}>
               <Box component="img"
                 src="https://maps.gstatic.com/mapfiles/api-3/images/powered-by-google-on-white3.png"
-                alt="Powered by Google"
-                sx={{ height: 14, opacity: 0.7 }}
+                alt="Powered by Google" sx={{ height: 14, opacity: 0.7 }}
               />
             </Box>
           </Paper>
@@ -400,7 +355,7 @@ const MapAddressPicker = () => {
               <Typography variant="body1" fontWeight={700} color="error" mb={1}>Map failed to load</Typography>
               <Typography variant="body2" color="text.secondary" mb={1}>{mapError}</Typography>
               <Typography variant="caption" color="text.secondary">
-                Ensure REACT_APP_GOOGLE_MAPS_KEY is set and Maps JavaScript API + Places API are enabled in Google Cloud Console.
+                Ensure REACT_APP_GOOGLE_MAPS_KEY is set and Maps JavaScript API + Places API are enabled.
               </Typography>
             </Box>
           </Box>
@@ -433,8 +388,12 @@ const MapAddressPicker = () => {
           <Box sx={{ width: 10, height: 5, borderRadius: '50%', background: 'rgba(0,0,0,0.18)', mt: 0.5 }} />
         </Box>
 
-        {/* My Location FAB */}
-        <Box sx={{ position: 'absolute', right: 16, bottom: 100, zIndex: 900 }}>
+        {/*
+          My Location FAB — bottom RIGHT.
+          Zoom controls are on the LEFT (set via zoomControlOptions above),
+          so there is zero overlap risk on either side.
+        */}
+        <Box sx={{ position: 'absolute', right: 16, bottom: 16, zIndex: 900 }}>
           <Paper elevation={3} onClick={handleMyLocation} sx={{
             width: 44, height: 44, borderRadius: 2,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
