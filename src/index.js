@@ -14,7 +14,6 @@ root.render(
 // Register service worker for PWA installability
 serviceWorkerRegistration.register({
   onSuccess: (registration) => {
-    console.log('Service worker registered successfully');
   },
   onUpdate: (registration) => {
     // Optionally notify user about new version

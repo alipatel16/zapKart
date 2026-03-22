@@ -27,8 +27,6 @@ exports.notifyAdminOnNewOrder = onDocumentCreated(
     const orderNumber   = order.orderNumber   || orderId.slice(-6).toUpperCase();
     const totalAmount   = order.totalAmount   || order.total    || 0;
 
-    console.log(`[FCM] New order ${orderNumber} for store ${storeId}`);
-
     // ── 1. Fetch admin FCM tokens for this store ────────────
     let tokensQuery = db.collection('fcmTokens').where('role', '==', 'admin');
     if (storeId) {
@@ -37,14 +35,11 @@ exports.notifyAdminOnNewOrder = onDocumentCreated(
 
     const tokenSnap = await tokensQuery.get();
     if (tokenSnap.empty) {
-      console.log('[FCM] No admin tokens found — skipping push');
       return;
     }
 
     const tokens = tokenSnap.docs.map((d) => d.data().token).filter(Boolean);
     if (tokens.length === 0) return;
-
-    console.log(`[FCM] Sending to ${tokens.length} admin device(s)`);
 
     // ── 2. Build FCM message ────────────────────────────────
     const message = {
@@ -101,7 +96,6 @@ exports.notifyAdminOnNewOrder = onDocumentCreated(
     // ── 3. Send & clean up invalid tokens ──────────────────
     try {
       const response = await messaging.sendEachForMulticast(message);
-      console.log(`[FCM] Sent: ${response.successCount} ok, ${response.failureCount} failed`);
 
       // Remove tokens that are no longer valid
       const staleTokenIds = [];
@@ -122,7 +116,6 @@ exports.notifyAdminOnNewOrder = onDocumentCreated(
         const batch = db.batch();
         staleTokenIds.forEach((id) => batch.delete(db.collection('fcmTokens').doc(id)));
         await batch.commit();
-        console.log(`[FCM] Removed ${staleTokenIds.length} stale token(s)`);
       }
     } catch (err) {
       console.error('[FCM] sendEachForMulticast error:', err);

@@ -22,7 +22,6 @@ const messaging = firebase.messaging();
 // ── Background message handler ──────────────────────────────
 // Fires when a FCM push arrives and the tab is NOT in the foreground
 messaging.onBackgroundMessage((payload) => {
-  console.log('[SW] Background message received:', payload);
 
   const { title, body, image } = payload.notification || {};
   const data = payload.data || {};

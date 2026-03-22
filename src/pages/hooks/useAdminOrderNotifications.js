@@ -420,14 +420,12 @@ export const useAdminOrderNotifications = () => {
 
       if (knownOrderIds.current === null) {
         knownOrderIds.current = currentIds;
-        console.log(`[Notify] Watching for new orders (${currentIds.size} existing)`);
         return;
       }
 
       snapshot.docs.forEach((docSnap) => {
         if (!knownOrderIds.current.has(docSnap.id)) {
           const order = { id: docSnap.id, ...docSnap.data() };
-          console.log(`[Notify] New order: #${order.orderNumber}`);
 
           playSound();
           showInAppToast(order);

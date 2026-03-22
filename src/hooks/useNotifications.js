@@ -52,7 +52,6 @@ export const useNotifications = () => {
       userAgent: navigator.userAgent.slice(0, 100),
       updatedAt: serverTimestamp(),
     }, { merge: true });
-    console.log(`[FCM] Token saved — role: ${resolvedRole}, storeId: ${resolvedStoreId}`);
   }, [user, resolvedStoreId, resolvedRole]);
 
   // ── Remove all tokens for this user ──────────────────────
