@@ -1,16 +1,16 @@
-// This optional code is used to register a service worker.
-// register() is not called by default.
-// This lets the app load faster on subsequent visits in production, and gives
-// it offline capabilities. However, it also means that developers (and users)
-// will only see deployed updates on subsequent visits to a page, after all the
-// existing tabs open on the page have been closed, since previously cached
-// resources are updated in the background.
-
 const isLocalhost = Boolean(
   window.location.hostname === 'localhost' ||
     window.location.hostname === '[::1]' ||
     window.location.hostname.match(/^127(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$/)
 );
+
+// Registered ONCE at module level — never accumulates, never fires twice
+let reloading = false;
+navigator.serviceWorker?.addEventListener('controllerchange', () => {
+  if (reloading) return;
+  reloading = true;
+  window.location.reload();
+});
 
 export function register(config) {
   if (process.env.NODE_ENV === 'production' && 'serviceWorker' in navigator) {
@@ -19,11 +19,8 @@ export function register(config) {
 
     window.addEventListener('load', () => {
       const swUrl = `${process.env.PUBLIC_URL}/service-worker.js`;
-
       if (isLocalhost) {
         checkValidServiceWorker(swUrl, config);
-        navigator.serviceWorker.ready.then(() => {
-        });
       } else {
         registerValidSW(swUrl, config);
       }
@@ -41,6 +38,8 @@ function registerValidSW(swUrl, config) {
         installingWorker.onstatechange = () => {
           if (installingWorker.state === 'installed') {
             if (navigator.serviceWorker.controller) {
+              // New SW is waiting — call onUpdate which sends SKIP_WAITING.
+              // The controllerchange listener above will then reload exactly once.
               if (config && config.onUpdate) config.onUpdate(registration);
             } else {
               if (config && config.onSuccess) config.onSuccess(registration);
@@ -50,7 +49,7 @@ function registerValidSW(swUrl, config) {
       };
     })
     .catch((error) => {
-      console.error('Error during service worker registration:', error);
+      console.error('[SW] Registration error:', error);
     });
 }
 
@@ -58,15 +57,19 @@ function checkValidServiceWorker(swUrl, config) {
   fetch(swUrl, { headers: { 'Service-Worker': 'script' } })
     .then((response) => {
       const contentType = response.headers.get('content-type');
-      if (response.status === 404 || (contentType != null && contentType.indexOf('javascript') === -1)) {
-        navigator.serviceWorker.ready.then((registration) => {
-          registration.unregister().then(() => window.location.reload());
-        });
+      if (
+        response.status === 404 ||
+        (contentType != null && contentType.indexOf('javascript') === -1)
+      ) {
+        // SW file not found — unregister silently, no reload here.
+        // The app will work without SW on next natural navigation.
+        navigator.serviceWorker.ready.then((reg) => reg.unregister());
       } else {
         registerValidSW(swUrl, config);
       }
     })
     .catch(() => {
+      console.log('[SW] No internet connection. App running in offline mode.');
     });
 }
 

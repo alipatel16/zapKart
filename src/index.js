@@ -11,16 +11,16 @@ root.render(
   </React.StrictMode>
 );
 
-// Register service worker for PWA installability
 serviceWorkerRegistration.register({
-  onSuccess: (registration) => {
+  onSuccess: () => {
+    console.log('[SW] App cached for offline use.');
   },
   onUpdate: (registration) => {
-    // Optionally notify user about new version
-    if (registration && registration.waiting) {
+    // Just send SKIP_WAITING — the controllerchange listener in
+    // serviceWorkerRegistration.js handles the single reload.
+    if (registration?.waiting) {
       registration.waiting.postMessage({ type: 'SKIP_WAITING' });
     }
-    window.location.reload();
   },
 });
 
