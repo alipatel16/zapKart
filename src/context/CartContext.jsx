@@ -66,6 +66,10 @@ export const CartProvider = ({ children }) => {
     return item ? item.quantity : 0;
   }, [items]);
 
+  // mrpTotal: sum of full MRP prices (before any product discounts)
+  const mrpTotal = items.reduce((sum, item) => sum + item.mrp * item.quantity, 0);
+
+  // subtotal: sum of selling prices (discounted or MRP if no discount)
   const subtotal = items.reduce((sum, item) => {
     const price = item.discountedPrice || item.mrp;
     return sum + price * item.quantity;
@@ -97,6 +101,7 @@ export const CartProvider = ({ children }) => {
     clearCart,
     isInCart,
     getQuantity,
+    mrpTotal,
     subtotal,
     discount,
     deliveryCharge,

@@ -3,12 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, Box, Typography, IconButton, Chip, Skeleton } from '@mui/material';
 import { Add, Remove } from '@mui/icons-material';
 import { useCart } from '../../context/CartContext';
-import { useAuth } from '../../context/AuthContext';
 import { ZAP_COLORS } from '../../theme';
 
 const ProductCard = ({ product, compact = false }) => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  // Removed useAuth — cart no longer requires login to add items.
+  // Login is enforced at checkout instead.
   const { addToCart, removeFromCart, updateQuantity, isInCart, getQuantity } = useCart();
   const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
@@ -18,12 +18,10 @@ const ProductCard = ({ product, compact = false }) => {
   const discount = product.mrp && product.discountedPrice
     ? Math.round(((product.mrp - product.discountedPrice) / product.mrp) * 100) : 0;
 
+  // No login check here — user can add to cart as guest.
+  // Login is required only when proceeding to checkout.
   const handleAdd = (e) => {
     e.stopPropagation();
-    if (!user) {
-      navigate('/login', { state: { from: { pathname: window.location.pathname } } });
-      return;
-    }
     addToCart(product);
   };
 
@@ -44,134 +42,127 @@ const ProductCard = ({ product, compact = false }) => {
         position: 'relative', overflow: 'visible',
         borderRadius: compact ? 2.5 : 3,
         border: `1px solid ${ZAP_COLORS.border}`,
-        transition: 'all 0.22s cubic-bezier(0.4,0,0.2,1)',
-        '&:hover': { transform: 'translateY(-3px)', boxShadow: `0 10px 28px ${ZAP_COLORS.primary}18`, borderColor: `${ZAP_COLORS.primary}40` },
+        boxShadow: 'none',
+        transition: 'all 0.2s',
+        '&:hover': { boxShadow: `0 4px 16px ${ZAP_COLORS.primary}18`, borderColor: `${ZAP_COLORS.primary}30` },
+        '&:active': { transform: 'scale(0.98)' },
       }}
     >
       {/* Discount badge */}
       {discount > 0 && (
-        <Box sx={{ position: 'absolute', top: 8, left: 8, zIndex: 1, background: `linear-gradient(135deg, ${ZAP_COLORS.primary}, ${ZAP_COLORS.primaryDark})`, color: '#fff', borderRadius: 1.5, px: 0.9, py: 0.15, fontSize: '0.65rem', fontWeight: 800, fontFamily: "'Syne', sans-serif", letterSpacing: '0.02em' }}>
-          {discount}% OFF
-        </Box>
-      )}
-      {product.isExclusive && !discount && (
-        <Box sx={{ position: 'absolute', top: 8, left: 8, zIndex: 1, background: `linear-gradient(135deg, ${ZAP_COLORS.accent}, #F59E0B)`, color: ZAP_COLORS.secondary, borderRadius: 1.5, px: 0.9, py: 0.15, fontSize: '0.65rem', fontWeight: 800, fontFamily: "'Syne', sans-serif" }}>
-          EXCLUSIVE
-        </Box>
-      )}
-      {product.isNewArrival && !discount && !product.isExclusive && (
-        <Box sx={{ position: 'absolute', top: 8, left: 8, zIndex: 1, background: `linear-gradient(135deg, ${ZAP_COLORS.accentGreen}, #059669)`, color: '#fff', borderRadius: 1.5, px: 0.9, py: 0.15, fontSize: '0.65rem', fontWeight: 800, fontFamily: "'Syne', sans-serif" }}>
-          NEW
-        </Box>
+        <Chip
+          label={`${discount}% off`}
+          size="small"
+          sx={{
+            position: 'absolute', top: 8, left: 8, zIndex: 1,
+            background: ZAP_COLORS.primary, color: '#fff',
+            fontSize: '0.62rem', height: 18, fontWeight: 700,
+          }}
+        />
       )}
 
-      {/* Out of stock */}
-      {product.stock <= 0 && (
-        <Box sx={{ position: 'absolute', inset: 0, zIndex: 2, background: 'rgba(255,255,255,0.82)', borderRadius: compact ? 2.5 : 3, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Typography sx={{ fontWeight: 700, color: ZAP_COLORS.textSecondary, fontSize: '0.82rem', background: '#fff', px: 1.5, py: 0.4, borderRadius: 10, border: `1px solid ${ZAP_COLORS.border}` }}>
-            Out of Stock
-          </Typography>
-        </Box>
-      )}
-
-      {/* Image with lazy loading skeleton */}
-      <Box sx={{ position: 'relative', pt: compact ? '80%' : '90%', background: `${ZAP_COLORS.primary}05`, borderRadius: `${compact ? 10 : 12}px ${compact ? 10 : 12}px 0 0`, overflow: 'hidden' }}>
-        {!imgLoaded && (
-          <Skeleton variant="rectangular" sx={{ position: 'absolute', inset: 0, transform: 'none', borderRadius: 0, background: `${ZAP_COLORS.primary}08` }} />
+      {/* Image */}
+      <Box sx={{
+        position: 'relative', overflow: 'hidden',
+        borderRadius: compact ? '10px 10px 0 0' : '12px 12px 0 0',
+        background: `${ZAP_COLORS.primary}08`,
+        height: compact ? 110 : 140,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        {!imgLoaded && !imgError && (
+          <Skeleton variant="rectangular" sx={{ position: 'absolute', inset: 0, borderRadius: 0 }} />
         )}
         <Box
           component="img"
           src={imgSrc}
           alt={product.name}
-          loading="lazy"
           onLoad={() => setImgLoaded(true)}
-          onError={() => { setImgError(true); setImgLoaded(true); }}
+          onError={() => setImgError(true)}
           sx={{
-            position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-            objectFit: 'contain', p: compact ? 0.8 : 1.2,
-            opacity: imgLoaded ? 1 : 0,
-            transition: 'opacity 0.3s ease',
+            width: '100%', height: '100%', objectFit: 'cover',
+            opacity: imgLoaded ? 1 : 0, transition: 'opacity 0.3s',
           }}
         />
       </Box>
 
-      <CardContent sx={{ p: compact ? 1.2 : 1.5, pb: '10px !important', flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <Typography variant="body2" fontWeight={600} sx={{ fontSize: compact ? '0.78rem' : '0.85rem', lineHeight: 1.3, mb: 0.3 }} noWrap={compact}>
+      <CardContent sx={{ p: compact ? 1.2 : 1.5, pt: 1, flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <Typography
+          variant="body2"
+          fontWeight={600}
+          sx={{ fontSize: compact ? '0.75rem' : '0.82rem', lineHeight: 1.3, mb: 0.5, flex: 1 }}
+          style={{
+            display: '-webkit-box', WebkitBoxOrient: 'vertical',
+            WebkitLineClamp: 2, overflow: 'hidden',
+          }}
+        >
           {product.name}
         </Typography>
         {product.unit && (
-          <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block', fontSize: '0.68rem' }}>{product.unit}</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem', mb: 0.5 }}>{product.unit}</Typography>
         )}
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, mt: 'auto', mb: 1 }}>
-          <Typography sx={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, color: ZAP_COLORS.textPrimary, fontSize: compact ? '0.95rem' : '1.05rem' }}>
-            ₹{product.discountedPrice || product.mrp}
-          </Typography>
-          {product.discountedPrice && product.mrp > product.discountedPrice && (
-            <Typography variant="caption" sx={{ textDecoration: 'line-through', color: ZAP_COLORS.textMuted, fontSize: '0.7rem' }}>
-              ₹{product.mrp}
+        {/* Price + Add button */}
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 'auto' }}>
+          <Box>
+            <Typography variant="body2" fontWeight={800} color="text.primary" sx={{ fontSize: compact ? '0.82rem' : '0.9rem', lineHeight: 1 }}>
+              ₹{product.discountedPrice || product.mrp}
             </Typography>
+            {product.discountedPrice && product.mrp > product.discountedPrice && (
+              <Typography variant="caption" sx={{ textDecoration: 'line-through', color: 'text.secondary', fontSize: '0.68rem' }}>
+                ₹{product.mrp}
+              </Typography>
+            )}
+          </Box>
+
+          {product.stock <= 0 ? (
+            <Typography variant="caption" sx={{ color: ZAP_COLORS.error, fontWeight: 600, fontSize: '0.65rem' }}>
+              Out of Stock
+            </Typography>
+          ) : !inCart ? (
+            <IconButton
+              size="small"
+              onClick={handleAdd}
+              sx={{
+                background: ZAP_COLORS.primary, color: '#fff', borderRadius: 1.5,
+                width: 28, height: 28,
+                '&:hover': { background: ZAP_COLORS.primaryDark },
+                '&:active': { transform: 'scale(0.9)' },
+              }}
+            >
+              <Add sx={{ fontSize: 16 }} />
+            </IconButton>
+          ) : (
+            <Box sx={{
+              display: 'flex', alignItems: 'center',
+              background: ZAP_COLORS.primary, borderRadius: 1.5, overflow: 'hidden',
+            }}>
+              <IconButton size="small" onClick={handleDecrease} sx={{ color: '#fff', p: 0.3, borderRadius: 0 }}>
+                <Remove sx={{ fontSize: 14 }} />
+              </IconButton>
+              <Typography sx={{ color: '#fff', fontWeight: 700, px: 0.7, fontSize: '0.8rem', minWidth: 20, textAlign: 'center' }}>
+                {qty}
+              </Typography>
+              <IconButton size="small" onClick={handleIncrease} sx={{ color: '#fff', p: 0.3, borderRadius: 0 }}>
+                <Add sx={{ fontSize: 14 }} />
+              </IconButton>
+            </Box>
           )}
         </Box>
-
-        {/* ── Add to cart button ──────────────────────────────────────────── */}
-        {!inCart ? (
-          <Box
-            onClick={handleAdd}
-            sx={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5,
-              py: compact ? 0.7 : 0.9, borderRadius: 2.5,
-              background: `linear-gradient(135deg, ${ZAP_COLORS.primary} 0%, ${ZAP_COLORS.primaryDark} 100%)`,
-              color: '#fff', cursor: 'pointer',
-              fontFamily: "'Syne', sans-serif", fontWeight: 700,
-              fontSize: compact ? '0.72rem' : '0.78rem',
-              letterSpacing: '0.04em',
-              boxShadow: `0 3px 10px ${ZAP_COLORS.primary}35`,
-              transition: 'all 0.18s cubic-bezier(0.34,1.56,0.64,1)',
-              '&:hover': { transform: 'scale(1.03)', boxShadow: `0 5px 16px ${ZAP_COLORS.primary}50` },
-              '&:active': { transform: 'scale(0.96)' },
-            }}
-          >
-            <Add sx={{ fontSize: compact ? 13 : 15 }} />
-            ADD
-          </Box>
-        ) : (
-          <Box sx={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            borderRadius: 2.5, overflow: 'hidden',
-            background: `linear-gradient(135deg, ${ZAP_COLORS.primary} 0%, ${ZAP_COLORS.primaryDark} 100%)`,
-            boxShadow: `0 3px 10px ${ZAP_COLORS.primary}35`,
-          }}>
-            <IconButton
-              size="small" onClick={handleDecrease}
-              sx={{ color: '#fff', borderRadius: 0, p: compact ? 0.5 : 0.7, '&:hover': { background: 'rgba(0,0,0,0.15)' } }}
-            >
-              <Remove sx={{ fontSize: compact ? 14 : 16 }} />
-            </IconButton>
-            <Typography sx={{ color: '#fff', fontWeight: 800, fontFamily: "'Syne', sans-serif", fontSize: compact ? '0.85rem' : '0.95rem', minWidth: 20, textAlign: 'center' }}>
-              {qty}
-            </Typography>
-            <IconButton
-              size="small" onClick={handleIncrease}
-              sx={{ color: '#fff', borderRadius: 0, p: compact ? 0.5 : 0.7, '&:hover': { background: 'rgba(0,0,0,0.15)' } }}
-            >
-              <Add sx={{ fontSize: compact ? 14 : 16 }} />
-            </IconButton>
-          </Box>
-        )}
       </CardContent>
     </Card>
   );
 };
 
 export const ProductCardSkeleton = ({ compact = false }) => (
-  <Card sx={{ borderRadius: compact ? 2.5 : 3, border: `1px solid ${ZAP_COLORS.border}` }}>
-    <Skeleton variant="rectangular" height={compact ? 120 : 150} sx={{ transform: 'none' }} />
-    <CardContent sx={{ p: 1.5 }}>
-      <Skeleton width="75%" height={14} sx={{ mb: 0.5 }} />
-      <Skeleton width="40%" height={12} sx={{ mb: 0.8 }} />
-      <Skeleton width="50%" height={18} sx={{ mb: 1 }} />
-      <Skeleton variant="rectangular" height={34} sx={{ borderRadius: 2.5 }} />
+  <Card sx={{ borderRadius: compact ? 2.5 : 3, border: `1px solid ${ZAP_COLORS.border}`, boxShadow: 'none' }}>
+    <Skeleton variant="rectangular" height={compact ? 110 : 140} sx={{ borderRadius: compact ? '10px 10px 0 0' : '12px 12px 0 0' }} />
+    <CardContent sx={{ p: compact ? 1.2 : 1.5, pt: 1 }}>
+      <Skeleton height={16} sx={{ mb: 0.5 }} />
+      <Skeleton width="60%" height={12} sx={{ mb: 1 }} />
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Skeleton width={40} height={20} />
+        <Skeleton variant="rounded" width={28} height={28} />
+      </Box>
     </CardContent>
   </Card>
 );

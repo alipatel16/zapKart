@@ -8,7 +8,7 @@ import {
 import {
   Dashboard, Inventory2, ShoppingBag, Category, ViewCarousel,
   LocalOffer, TrendingUp, ShoppingCart, FlashOn, Menu as MenuIcon,
-  ChevronLeft, Logout, Home, Store, SwapHoriz,
+  ChevronLeft, Logout, Home, Store, SwapHoriz, StarBorder,
 } from '@mui/icons-material';
 import { useAuth } from '../../context/AuthContext';
 import { useStore } from '../../context/StoreContext';
@@ -19,16 +19,17 @@ const DRAWER_WIDTH = 230;
 const MINI_WIDTH = 64;
 
 const navItems = [
-  { path: '/admin',            label: 'Dashboard',    icon: <Dashboard />,  exact: true },
-  { path: '/admin/orders',     label: 'Orders',       icon: <ShoppingBag /> },
-  { path: '/admin/products',   label: 'Products',     icon: <Inventory2 /> },
-  { path: '/admin/categories', label: 'Categories',   icon: <Category /> },
-  { path: '/admin/inventory',  label: 'Inventory',    icon: <TrendingUp /> },
-  { path: '/admin/purchases',  label: 'Purchases',    icon: <ShoppingCart /> },
-  { path: '/admin/banners',    label: 'Banners',      icon: <ViewCarousel /> },
-  { path: '/admin/coupons',    label: 'Coupons',      icon: <LocalOffer /> },
-  { path: '/admin/stores',     label: 'Stores',       icon: <Store /> },
-  { path: '/admin/sales',      label: 'Sales Report', icon: <TrendingUp /> },
+  { path: '/admin',             label: 'Dashboard',    icon: <Dashboard />,   exact: true },
+  { path: '/admin/orders',      label: 'Orders',       icon: <ShoppingBag /> },
+  { path: '/admin/products',    label: 'Products',     icon: <Inventory2 /> },
+  { path: '/admin/categories',  label: 'Categories',   icon: <Category /> },
+  { path: '/admin/inventory',   label: 'Inventory',    icon: <TrendingUp /> },
+  { path: '/admin/purchases',   label: 'Purchases',    icon: <ShoppingCart /> },
+  { path: '/admin/banners',     label: 'Banners',      icon: <ViewCarousel /> },
+  { path: '/admin/coupons',     label: 'Coupons',      icon: <LocalOffer /> },
+  { path: '/admin/stores',      label: 'Stores',       icon: <Store /> },
+  { path: '/admin/sales',       label: 'Sales Report', icon: <TrendingUp /> },
+  { path: '/admin/top-picks',   label: 'Top Picks',    icon: <StarBorder /> },
 ];
 
 const AdminLayout = () => {
@@ -56,7 +57,15 @@ const AdminLayout = () => {
     );
   }
 
-  // ── Drawer content defined as plain JSX (not a nested component) so hooks 
+  // When store selector closes after a selection — reload so all store-scoped
+  // data refreshes and land on dashboard
+  const handleStoreSelectorClose = () => {
+    setStoreSelectorOpen(false);
+    navigate('/admin');
+    window.location.reload();
+  };
+
+  // ── Drawer content defined as plain JSX (not a nested component) so hooks
   //    are not called conditionally and refs are stable ─────────────────────
   const drawerContent = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -135,16 +144,11 @@ const AdminLayout = () => {
             ? location.pathname === item.path
             : location.pathname.startsWith(item.path);
           return (
-            <Tooltip
-              key={item.path}
-              title={collapsed ? item.label : ''}
-              placement="right"
-              arrow
-            >
+            <Tooltip key={item.path} title={collapsed ? item.label : ''} placement="right" arrow>
               {/* span wrapper needed so Tooltip can attach its ref when child is a button */}
               <span style={{ display: 'block', marginBottom: 2 }}>
                 <ListItemButton
-                  onClick={() => { if (isMobile) setDrawerOpen(false); setTimeout(() => {navigate(item.path);})}}
+                  onClick={() => { if (isMobile) setDrawerOpen(false); setTimeout(() => { navigate(item.path); }); }}
                   sx={{
                     borderRadius: 2,
                     background: active ? `${ZAP_COLORS.primary}25` : 'transparent',
@@ -302,7 +306,7 @@ const AdminLayout = () => {
       {/* Store selector modal */}
       <AdminStoreSelector
         open={storeSelectorOpen || needsStoreSelection}
-        onClose={needsStoreSelection ? undefined : () => setStoreSelectorOpen(false)}
+        onClose={needsStoreSelection ? undefined : handleStoreSelectorClose}
         required={needsStoreSelection}
       />
     </Box>

@@ -6,7 +6,7 @@ import {
   IconButton, Alert, Collapse,
 } from '@mui/material';
 import { Add, ArrowBack, CheckCircle, Phone, HeadsetMic, LocationOn, ErrorOutline } from '@mui/icons-material';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
@@ -14,7 +14,6 @@ import { useStore } from '../../context/StoreContext';
 import { initiateRazorpayPayment } from '../../utils/helpers';
 import { ZAP_COLORS } from '../../theme';
 
-/* Shake keyframes injected once */
 const SHAKE_STYLE = `
 @keyframes zapShake {
   0%,100% { transform: translateX(0); }
@@ -38,15 +37,12 @@ const Checkout = () => {
   const [loading, setLoading] = useState(false);
   const [orderPlaced, setOrderPlaced] = useState(null);
   const [error, setError] = useState('');
-
-  // Address-section error highlight
   const [addressShake, setAddressShake] = useState(false);
   const [addressMissing, setAddressMissing] = useState(false);
   const addressRef = useRef(null);
 
   const address = userProfile?.addresses?.find((a) => a.id === selectedAddress);
 
-  // ── Inject shake CSS once ─────────────────────────────────────────────────
   React.useEffect(() => {
     if (!document.getElementById('zap-shake-style')) {
       const style = document.createElement('style');
@@ -56,7 +52,6 @@ const Checkout = () => {
     }
   }, []);
 
-  // ── Highlight address section with shake ──────────────────────────────────
   const highlightAddressSection = () => {
     setAddressMissing(true);
     setAddressShake(true);
@@ -64,7 +59,6 @@ const Checkout = () => {
     setTimeout(() => setAddressShake(false), 700);
   };
 
-  // ── Place order ───────────────────────────────────────────────────────────
   const placeOrder = async (paymentInfo = null) => {
     if (!address) {
       setError('Please select or add a delivery address to continue.');
@@ -104,6 +98,23 @@ const Checkout = () => {
         updatedAt: serverTimestamp(),
       };
       const ref = await addDoc(collection(db, COLLECTIONS.ORDERS), orderData);
+
+      // ── Deduct stock for each ordered item ──────────────────────────────
+      for (const item of items) {
+        try {
+          const productSnap = await getDoc(doc(db, COLLECTIONS.PRODUCTS, item.id));
+          if (productSnap.exists()) {
+            const currentStock = productSnap.data().stock || 0;
+            await updateDoc(doc(db, COLLECTIONS.PRODUCTS, item.id), {
+              stock: Math.max(0, currentStock - item.quantity),
+              updatedAt: serverTimestamp(),
+            });
+          }
+        } catch (stockErr) {
+          console.warn(`Stock deduction failed for ${item.id}:`, stockErr.message);
+        }
+      }
+
       clearCart();
       setOrderPlaced({ ...orderData, id: ref.id });
     } catch (err) {
@@ -139,7 +150,6 @@ const Checkout = () => {
     }
   };
 
-  // ── Order success screen ──────────────────────────────────────────────────
   if (orderPlaced) {
     return (
       <Container maxWidth="sm" sx={{ py: 6, textAlign: 'center' }}>
@@ -151,9 +161,7 @@ const Checkout = () => {
           Your order <strong>#{orderPlaced.orderNumber}</strong> has been placed successfully.
         </Typography>
         <Typography variant="body2" color="text.secondary" mb={4}>
-          {paymentMethod === 'cod'
-            ? 'Please keep cash ready at the time of delivery.'
-            : 'Payment confirmed!'}
+          {paymentMethod === 'cod' ? 'Please keep cash ready at the time of delivery.' : 'Payment confirmed!'}
         </Typography>
         <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
           <Button variant="contained" onClick={() => navigate('/orders')}>Track Order</Button>
@@ -165,13 +173,11 @@ const Checkout = () => {
           </Typography>
           <Box sx={{ display: 'flex', gap: 1.5, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Button variant="outlined" size="small" startIcon={<Phone />}
-              component="a" href="tel:+919876543210"
-              sx={{ borderRadius: 10, fontSize: '0.8rem' }}>
+              component="a" href="tel:+919876543210" sx={{ borderRadius: 10, fontSize: '0.8rem' }}>
               Call Support
             </Button>
             <Button variant="outlined" size="small" startIcon={<HeadsetMic />}
-              onClick={() => navigate('/help')}
-              sx={{ borderRadius: 10, fontSize: '0.8rem' }}>
+              onClick={() => navigate('/help')} sx={{ borderRadius: 10, fontSize: '0.8rem' }}>
               Help Center
             </Button>
           </Box>
@@ -180,7 +186,6 @@ const Checkout = () => {
     );
   }
 
-  // ── Empty cart guard ──────────────────────────────────────────────────────
   if (!items.length) {
     return (
       <Container maxWidth="sm" sx={{ py: 6, textAlign: 'center' }}>
@@ -193,112 +198,69 @@ const Checkout = () => {
   return (
     <Box sx={{ pb: { xs: 13, md: 3 }, pt: 1 }}>
       <Container maxWidth="lg">
-        {/* Page title */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, px: { xs: 1, sm: 0 } }}>
           <IconButton onClick={() => navigate('/cart')} size="small"><ArrowBack /></IconButton>
           <Typography variant="h6" fontWeight={700}>Checkout</Typography>
         </Box>
 
-        {/* General error */}
         <Collapse in={!!error}>
-          <Alert
-            severity="error"
-            icon={<ErrorOutline />}
-            sx={{ mb: 2, borderRadius: 2 }}
-            onClose={() => setError('')}
-          >
+          <Alert severity="error" icon={<ErrorOutline />} sx={{ mb: 2, borderRadius: 2 }} onClose={() => setError('')}>
             {error}
           </Alert>
         </Collapse>
 
         <Box sx={{ display: 'flex', gap: 3, flexDirection: { xs: 'column', md: 'row' } }}>
           <Box sx={{ flex: 1 }}>
-
-            {/* ── Address section ── */}
-            <Paper
-              ref={addressRef}
-              elevation={0}
-              sx={{
-                border: `1.5px solid ${addressMissing && !address
-                  ? ZAP_COLORS.error || '#EF4444'
-                  : ZAP_COLORS.border}`,
-                borderRadius: 3, p: 2.5, mb: 2,
-                animation: addressShake ? 'zapShake 0.6s ease' : 'none',
-                transition: 'border-color 0.3s',
-              }}
-            >
+            {/* Address */}
+            <Paper ref={addressRef} elevation={0} sx={{
+              border: `1.5px solid ${addressMissing && !address ? ZAP_COLORS.error || '#EF4444' : ZAP_COLORS.border}`,
+              borderRadius: 3, p: 2.5, mb: 2,
+              animation: addressShake ? 'zapShake 0.6s ease' : 'none',
+              transition: 'border-color 0.3s',
+            }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6" fontWeight={700} fontSize="1rem">
-                  📍 Delivery Address
-                </Typography>
+                <Typography variant="h6" fontWeight={700} fontSize="1rem">📍 Delivery Address</Typography>
                 {(userProfile?.addresses?.length || 0) < 5 && (
-                  <Button
-                    size="small" startIcon={<Add />}
-                    onClick={() => navigate('/add-address?from=checkout')}
-                  >
+                  <Button size="small" startIcon={<Add />} onClick={() => navigate('/add-address?from=checkout')}>
                     Add New
                   </Button>
                 )}
               </Box>
 
-              {/* No addresses yet */}
               {!userProfile?.addresses?.length ? (
-                <Box
-                  onClick={() => navigate('/add-address?from=checkout')}
-                  sx={{
-                    py: 3, textAlign: 'center', cursor: 'pointer',
-                    border: `2px dashed ${addressMissing ? ZAP_COLORS.error || '#EF4444' : ZAP_COLORS.border}`,
-                    borderRadius: 2.5,
-                    '&:hover': { borderColor: ZAP_COLORS.primary, background: `${ZAP_COLORS.primary}05` },
-                    transition: 'all 0.2s',
-                  }}
-                >
+                <Box onClick={() => navigate('/add-address?from=checkout')} sx={{
+                  py: 3, textAlign: 'center', cursor: 'pointer',
+                  border: `2px dashed ${addressMissing ? ZAP_COLORS.error || '#EF4444' : ZAP_COLORS.border}`,
+                  borderRadius: 2.5,
+                  '&:hover': { borderColor: ZAP_COLORS.primary, background: `${ZAP_COLORS.primary}05` },
+                  transition: 'all 0.2s',
+                }}>
                   <LocationOn sx={{ fontSize: 32, color: addressMissing ? ZAP_COLORS.error || '#EF4444' : ZAP_COLORS.textMuted, mb: 0.5 }} />
-                  <Typography variant="body2" fontWeight={600} color={addressMissing ? 'error' : 'text.primary'}>
-                    Add a delivery address
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Tap to pick your location on the map
+                  <Typography variant="body2" fontWeight={600} color={addressMissing ? 'error' : 'text.secondary'}>
+                    Tap to add a delivery address
                   </Typography>
                 </Box>
               ) : (
-                // Address list
-                <RadioGroup
-                  value={selectedAddress}
-                  onChange={(e) => {
-                    setSelectedAddress(e.target.value);
-                    setAddressMissing(false);
-                  }}
-                >
+                <RadioGroup value={selectedAddress} onChange={(e) => setSelectedAddress(e.target.value)}>
                   {userProfile.addresses.map((addr) => (
-                    <Box
-                      key={addr.id}
-                      sx={{
-                        border: `1.5px solid ${selectedAddress === addr.id ? ZAP_COLORS.primary : ZAP_COLORS.border}`,
-                        borderRadius: 2.5, p: 1.5, mb: 1.2,
-                        background: selectedAddress === addr.id ? `${ZAP_COLORS.primary}06` : 'transparent',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s',
-                      }}
-                      onClick={() => {
-                        setSelectedAddress(addr.id);
-                        setAddressMissing(false);
-                      }}
-                    >
+                    <Box key={addr.id} onClick={() => setSelectedAddress(addr.id)} sx={{
+                      border: `1.5px solid ${selectedAddress === addr.id ? ZAP_COLORS.primary : ZAP_COLORS.border}`,
+                      borderRadius: 2.5, p: 1.5, mb: 1.5, cursor: 'pointer',
+                      background: selectedAddress === addr.id ? `${ZAP_COLORS.primary}06` : 'transparent',
+                      transition: 'all 0.2s',
+                    }}>
                       <FormControlLabel
                         value={addr.id}
-                        control={<Radio size="small" />}
+                        control={<Radio size="small" sx={{ color: ZAP_COLORS.primary, '&.Mui-checked': { color: ZAP_COLORS.primary } }} />}
                         label={
                           <Box>
-                            <Box sx={{ display: 'flex', gap: 0.8, alignItems: 'center', mb: 0.3 }}>
-                              <Chip label={addr.label} size="small" color="primary" sx={{ height: 18, fontSize: '0.65rem' }} />
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, mb: 0.2 }}>
                               <Typography variant="body2" fontWeight={700}>{addr.name}</Typography>
-                              <Typography variant="caption" color="text.secondary">{addr.phone}</Typography>
+                              <Chip label={addr.label} size="small" sx={{ height: 16, fontSize: '0.6rem', fontWeight: 600 }} />
                             </Box>
                             <Typography variant="caption" color="text.secondary">
                               {addr.line1}{addr.line2 ? `, ${addr.line2}` : ''}, {addr.city}
-                              {addr.state ? `, ${addr.state}` : ''}
-                              {addr.pincode ? ` - ${addr.pincode}` : ''}
+                              {addr.state ? `, ${addr.state}` : ''}{addr.pincode ? ` - ${addr.pincode}` : ''}
                             </Typography>
                           </Box>
                         }
@@ -308,64 +270,40 @@ const Checkout = () => {
                   ))}
                 </RadioGroup>
               )}
-
-              {/* Inline error hint */}
               {addressMissing && !address && (
-                <Typography
-                  variant="caption"
-                  sx={{ color: ZAP_COLORS.error || '#EF4444', fontWeight: 600, display: 'block', mt: 0.5 }}
-                >
+                <Typography variant="caption" sx={{ color: ZAP_COLORS.error || '#EF4444', fontWeight: 600, display: 'block', mt: 0.5 }}>
                   ↑ Please add or select a delivery address
                 </Typography>
               )}
             </Paper>
 
-            {/* ── Payment method ── */}
-            <Paper
-              elevation={0}
-              sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3, p: 2.5, mb: 2 }}
-            >
-              <Typography variant="h6" fontWeight={700} fontSize="1rem" mb={1.5}>
-                💳 Payment Method
-              </Typography>
+            {/* Payment */}
+            <Paper elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3, p: 2.5, mb: 2 }}>
+              <Typography variant="h6" fontWeight={700} fontSize="1rem" mb={1.5}>💳 Payment Method</Typography>
               <RadioGroup value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
-                <FormControlLabel
-                  value="cod"
-                  control={<Radio size="small" />}
-                  label={<Typography variant="body2" fontWeight={500}>Cash on Delivery</Typography>}
-                />
-                <FormControlLabel
-                  value="razorpay"
-                  control={<Radio size="small" />}
-                  label={<Typography variant="body2" fontWeight={500}>Pay Online (UPI / Card / Net Banking)</Typography>}
-                />
+                <FormControlLabel value="cod" control={<Radio size="small" />}
+                  label={<Typography variant="body2" fontWeight={500}>Cash on Delivery</Typography>} />
+                <FormControlLabel value="razorpay" control={<Radio size="small" />}
+                  label={<Typography variant="body2" fontWeight={500}>Pay Online (UPI / Card / Net Banking)</Typography>} />
               </RadioGroup>
             </Paper>
           </Box>
 
-          {/* ── Order summary ── */}
+          {/* Order summary */}
           <Box sx={{ width: { md: 340 }, flexShrink: 0 }}>
-            <Paper
-              elevation={0}
-              sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3, p: 2.5, position: 'sticky', top: 80 }}
-            >
+            <Paper elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3, p: 2.5, position: 'sticky', top: 80 }}>
               <Typography variant="h6" fontWeight={700} fontSize="1rem" mb={2}>🧾 Order Summary</Typography>
-
-              {/* Items */}
               {items.map((item) => (
                 <Box key={item.id} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                   <Typography variant="body2" color="text.secondary" sx={{ flex: 1, mr: 1 }}>
-                    {item.name}
-                    <Typography component="span" variant="caption" color="text.secondary"> ×{item.quantity}</Typography>
+                    {item.name}<Typography component="span" variant="caption"> ×{item.quantity}</Typography>
                   </Typography>
                   <Typography variant="body2" fontWeight={600}>
                     ₹{((item.discountedPrice || item.mrp) * item.quantity).toFixed(0)}
                   </Typography>
                 </Box>
               ))}
-
               <Divider sx={{ my: 1.5 }} />
-
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.8 }}>
                 <Typography variant="body2" color="text.secondary">Subtotal</Typography>
                 <Typography variant="body2">₹{subtotal.toFixed(0)}</Typography>
@@ -373,37 +311,24 @@ const Checkout = () => {
               {discount > 0 && (
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.8 }}>
                   <Typography variant="body2" color="text.secondary">Coupon Discount</Typography>
-                  <Typography variant="body2" sx={{ color: ZAP_COLORS.accentGreen || '#06D6A0' }}>
-                    −₹{discount.toFixed(0)}
-                  </Typography>
+                  <Typography variant="body2" sx={{ color: ZAP_COLORS.accentGreen || '#06D6A0' }}>−₹{discount.toFixed(0)}</Typography>
                 </Box>
               )}
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.8 }}>
                 <Typography variant="body2" color="text.secondary">Delivery</Typography>
                 <Typography variant="body2">
-                  {deliveryCharge === 0 ? (
-                    <Typography component="span" sx={{ color: ZAP_COLORS.accentGreen || '#06D6A0', fontSize: '0.85rem', fontWeight: 600 }}>
-                      FREE
-                    </Typography>
-                  ) : `₹${deliveryCharge}`}
+                  {deliveryCharge === 0
+                    ? <Typography component="span" sx={{ color: ZAP_COLORS.accentGreen || '#06D6A0', fontSize: '0.85rem', fontWeight: 600 }}>FREE</Typography>
+                    : `₹${deliveryCharge}`}
                 </Typography>
               </Box>
-
               <Divider sx={{ my: 1.5 }} />
-
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
                 <Typography fontWeight={700}>Total</Typography>
                 <Typography fontWeight={700} fontSize="1.1rem">₹{total.toFixed(0)}</Typography>
               </Box>
-
-              <Button
-                fullWidth
-                variant="contained"
-                size="large"
-                onClick={handleCheckout}
-                disabled={loading}
-                sx={{ borderRadius: 3, py: 1.5, fontWeight: 700 }}
-              >
+              <Button fullWidth variant="contained" size="large" onClick={handleCheckout} disabled={loading}
+                sx={{ borderRadius: 3, py: 1.5, fontWeight: 700 }}>
                 {loading
                   ? <CircularProgress size={22} sx={{ color: '#fff' }} />
                   : paymentMethod === 'cod' ? 'Place Order' : `Pay ₹${total}`}

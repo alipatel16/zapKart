@@ -10,8 +10,8 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { useNotifications } from './hooks/useNotifications';
 
 // ── Common ───────────────────────────────────────────────────────────────────
-const Header        = lazy(() => import('./components/common/Header'));
-const BottomNav     = lazy(() => import('./components/common/BottomNav'));
+const Header            = lazy(() => import('./components/common/Header'));
+const BottomNav         = lazy(() => import('./components/common/BottomNav'));
 const LocationGate      = lazy(() => import('./pages/user/LocationGate'));
 
 // ── User pages ────────────────────────────────────────────────────────────────
@@ -21,13 +21,15 @@ const Cart          = lazy(() => import('./pages/user/Cart'));
 const Checkout      = lazy(() => import('./pages/user/Checkout'));
 const OrderHistory  = lazy(() => import('./pages/user/OrderHistory'));
 const ProductDetail = lazy(() => import('./pages/user/ProductDetail'));
-const CategoryPage    = lazy(() => import('./pages/user/CategoryPage'));
-const CategoriesPage  = lazy(() => import('./pages/user/CategoriesPage'));
+const CategoryPage  = lazy(() => import('./pages/user/CategoryPage'));
+const CategoriesPage= lazy(() => import('./pages/user/CategoriesPage'));
 const Profile       = lazy(() => import('./pages/user/Profile'));
-const HelpPage      = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.HelpPage })));
-const AboutPage     = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.AboutPage })));
-const PrivacyPage   = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.PrivacyPage })));
-const TermsPage     = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.TermsPage })));
+
+const HelpPage     = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.HelpPage })));
+const AboutPage    = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.AboutPage })));
+const PrivacyPage  = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.PrivacyPage })));
+const TermsPage    = lazy(() => import('./pages/user/InfoPages').then(m => ({ default: m.TermsPage })));
+
 const MapAddressPicker = lazy(() => import('./pages/user/MapAddressPicker'));
 const AddressDetails   = lazy(() => import('./pages/user/AddressDetails'));
 
@@ -38,6 +40,7 @@ const AdminOrders    = lazy(() => import('./pages/admin/AdminOrders'));
 const AdminProducts  = lazy(() => import('./pages/admin/AdminProducts'));
 const AdminPurchases = lazy(() => import('./pages/admin/AdminPurchases'));
 const AdminStores    = lazy(() => import('./pages/admin/AdminStores'));
+const AdminTopPicks  = lazy(() => import('./pages/admin/AdminTopPicks'));
 
 // Named exports — must each use their own .then() wrapper
 const AdminCategories = lazy(() =>
@@ -86,8 +89,6 @@ const LoadingScreen = () => (
 );
 
 // ── User layout ───────────────────────────────────────────────────────────────
-// LocationGate is rendered INSIDE StoreProvider (see provider tree below),
-// so useStore() inside LocationGate always has a valid context.
 const UserLayout = ({ children }) => (
   <LocationGate>
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
@@ -112,13 +113,6 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      {/*
-        Provider order (outermost → innermost):
-          AuthProvider   — Firebase auth state
-          StoreProvider  — GPS + nearest-store (must wrap LocationGate & admin)
-          CartProvider   — cart state
-          Router         — React Router
-      */}
       <ErrorBoundary>
       <AuthProvider>
         <StoreProvider>
@@ -129,23 +123,23 @@ function App() {
                 <Routes>
 
                   {/* USER ROUTES */}
-                  <Route path="/"             element={<UserLayout><Home /></UserLayout>} />
-                  <Route path="/login"        element={<Auth />} />
-                  <Route path="/cart"         element={<UserLayout><Cart /></UserLayout>} />
-                  <Route path="/checkout"     element={<UserLayout><Checkout /></UserLayout>} />
-                  <Route path="/orders"       element={<UserLayout><OrderHistory /></UserLayout>} />
-                  <Route path="/product/:id"  element={<UserLayout><ProductDetail /></UserLayout>} />
-                  <Route path="/category/:id" element={<UserLayout><CategoryPage /></UserLayout>} />
-                  <Route path="/categories"   element={<UserLayout><CategoriesPage /></UserLayout>} />
-                  <Route path="/products"     element={<UserLayout><CategoryPage /></UserLayout>} />
-                  <Route path="/search"       element={<UserLayout><CategoryPage /></UserLayout>} />
-                  <Route path="/profile"      element={<UserLayout><Profile /></UserLayout>} />
-                  <Route path="/add-address"   element={<MapAddressPicker />} />
+                  <Route path="/"                element={<UserLayout><Home /></UserLayout>} />
+                  <Route path="/login"           element={<Auth />} />
+                  <Route path="/cart"            element={<UserLayout><Cart /></UserLayout>} />
+                  <Route path="/checkout"        element={<UserLayout><Checkout /></UserLayout>} />
+                  <Route path="/orders"          element={<UserLayout><OrderHistory /></UserLayout>} />
+                  <Route path="/product/:id"     element={<UserLayout><ProductDetail /></UserLayout>} />
+                  <Route path="/category/:id"    element={<UserLayout><CategoryPage /></UserLayout>} />
+                  <Route path="/categories"      element={<UserLayout><CategoriesPage /></UserLayout>} />
+                  <Route path="/products"        element={<UserLayout><CategoryPage /></UserLayout>} />
+                  <Route path="/search"          element={<UserLayout><CategoryPage /></UserLayout>} />
+                  <Route path="/profile"         element={<UserLayout><Profile /></UserLayout>} />
+                  <Route path="/add-address"     element={<MapAddressPicker />} />
                   <Route path="/address-details" element={<AddressDetails />} />
-                  <Route path="/help"         element={<UserLayout><HelpPage /></UserLayout>} />
-                  <Route path="/about"        element={<UserLayout><AboutPage /></UserLayout>} />
-                  <Route path="/privacy"      element={<UserLayout><PrivacyPage /></UserLayout>} />
-                  <Route path="/terms"        element={<UserLayout><TermsPage /></UserLayout>} />
+                  <Route path="/help"            element={<UserLayout><HelpPage /></UserLayout>} />
+                  <Route path="/about"           element={<UserLayout><AboutPage /></UserLayout>} />
+                  <Route path="/privacy"         element={<UserLayout><PrivacyPage /></UserLayout>} />
+                  <Route path="/terms"           element={<UserLayout><TermsPage /></UserLayout>} />
 
                   {/* ADMIN ROUTES */}
                   <Route path="/admin" element={<AdminLayout />}>
@@ -161,6 +155,7 @@ function App() {
                     <Route path="coupons"      element={<AdminCoupons />} />
                     <Route path="sales"        element={<AdminSalesReport />} />
                     <Route path="stores"       element={<AdminStores />} />
+                    <Route path="top-picks"    element={<AdminTopPicks />} />
                   </Route>
 
                   {/* FALLBACK */}

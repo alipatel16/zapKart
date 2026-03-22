@@ -6,8 +6,8 @@ import {
   TableRow, Select, MenuItem, CircularProgress, Alert,
 } from '@mui/material';
 import {
-  TrendingUp, ShoppingBag, Inventory2, People,
-  LocalShipping, AttachMoney, Warning,
+  ShoppingBag, Inventory2, People,
+  AttachMoney, Warning,
 } from '@mui/icons-material';
 import {
   collection, query, where, orderBy, limit, getDocs,
@@ -66,21 +66,38 @@ const AdminDashboard = () => {
 
         const startTs = Timestamp.fromDate(startDate);
 
-        const [ordersSnap, allOrdersSnap, productsSnap, usersSnap, pendingSnap, recentSnap] = await Promise.all([
-          getCountFromServer(query(collection(db, COLLECTIONS.ORDERS), where('createdAt', '>=', startTs))),
-          getDocs(query(collection(db, COLLECTIONS.ORDERS), where('createdAt', '>=', startTs))),
-          getCountFromServer(query(collection(db, COLLECTIONS.PRODUCTS), where('active', '==', true))),
-          getCountFromServer(collection(db, COLLECTIONS.USERS)),
-          getCountFromServer(query(collection(db, COLLECTIONS.ORDERS), where('status', '==', 'placed'))),
-          getDocs(query(collection(db, COLLECTIONS.ORDERS), orderBy('createdAt', 'desc'), limit(8))),
+        // Base constraints — scope to current store if one is selected
+        const orderConstraints = [where('createdAt', '>=', startTs)];
+        const productConstraints = [where('active', '==', true)];
+        const pendingConstraints = [where('status', '==', 'placed')];
+        const recentConstraints = [orderBy('createdAt', 'desc')];
+        const lowStockConstraints = [where('stock', '<=', 5), where('active', '==', true)];
+
+        if (adminStore?.id) {
+          orderConstraints.unshift(where('storeId', '==', adminStore.id));
+          productConstraints.unshift(where('storeId', '==', adminStore.id));
+          pendingConstraints.unshift(where('storeId', '==', adminStore.id));
+          recentConstraints.unshift(where('storeId', '==', adminStore.id));
+          lowStockConstraints.unshift(where('storeId', '==', adminStore.id));
+        }
+
+        const [ordersSnap, allOrdersSnap, productsSnap, pendingSnap, recentSnap] = await Promise.all([
+          getCountFromServer(query(collection(db, COLLECTIONS.ORDERS), ...orderConstraints)),
+          getDocs(query(collection(db, COLLECTIONS.ORDERS), ...orderConstraints)),
+          getCountFromServer(query(collection(db, COLLECTIONS.PRODUCTS), ...productConstraints)),
+          getCountFromServer(query(collection(db, COLLECTIONS.ORDERS), ...pendingConstraints)),
+          getDocs(query(collection(db, COLLECTIONS.ORDERS), ...recentConstraints, limit(8))),
         ]);
+
+        // Users count — global (users are not store-scoped)
+        const usersSnap = await getCountFromServer(collection(db, COLLECTIONS.USERS));
 
         const revenue = allOrdersSnap.docs
           .filter((d) => d.data().paymentStatus === 'paid' || d.data().paymentMethod === 'cod')
           .reduce((sum, d) => sum + (d.data().total || 0), 0);
 
-        // Low stock check
-        const invSnap = await getDocs(query(collection(db, COLLECTIONS.PRODUCTS), where('stock', '<=', 5), where('active', '==', true)));
+        // Low stock — scoped to store
+        const invSnap = await getDocs(query(collection(db, COLLECTIONS.PRODUCTS), ...lowStockConstraints));
 
         setStats({
           orders: ordersSnap.data().count,
@@ -117,7 +134,9 @@ const AdminDashboard = () => {
           <Typography variant="h5" fontWeight={800} sx={{ fontFamily: "'Syne', sans-serif" }}>
             Dashboard ⚡
           </Typography>
-          <Typography variant="body2" color="text.secondary">Zap Admin Panel</Typography>
+          <Typography variant="body2" color="text.secondary">
+            {adminStore ? `Showing data for ${adminStore.name}` : 'Zap Admin Panel'}
+          </Typography>
         </Box>
         <Select
           value={dateRange} onChange={(e) => setDateRange(e.target.value)}
@@ -201,48 +220,29 @@ const AdminDashboard = () => {
           </TableHead>
           <TableBody>
             {loading ? (
-              <TableRow>
-                <TableCell colSpan={7} align="center" sx={{ py: 3 }}>
-                  <CircularProgress size={24} />
-                </TableCell>
-              </TableRow>
+              <TableRow><TableCell colSpan={7} align="center" sx={{ py: 4 }}><CircularProgress size={28} /></TableCell></TableRow>
             ) : recentOrders.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} align="center" sx={{ py: 3, color: ZAP_COLORS.textMuted }}>
-                  No orders yet
-                </TableCell>
-              </TableRow>
+              <TableRow><TableCell colSpan={7} align="center" sx={{ py: 4, color: ZAP_COLORS.textMuted }}>No orders yet.</TableCell></TableRow>
             ) : recentOrders.map((order) => {
               const statusColor = getOrderStatusColor(order.status);
               return (
-                <TableRow
-                  key={order.id} hover
-                  onClick={() => navigate(`/admin/orders/${order.id}`)}
-                  sx={{ cursor: 'pointer' }}
-                >
+                <TableRow key={order.id} hover sx={{ cursor: 'pointer' }} onClick={() => navigate('/admin/orders')}>
                   <TableCell sx={{ fontSize: '0.78rem', fontWeight: 600 }}>#{order.orderNumber}</TableCell>
-                  <TableCell sx={{ fontSize: '0.78rem' }}>{order.customerName || '—'}</TableCell>
-                  <TableCell sx={{ fontSize: '0.78rem' }}>{order.items?.length}</TableCell>
-                  <TableCell sx={{ fontSize: '0.78rem', fontWeight: 600 }}>₹{order.total}</TableCell>
+                  <TableCell sx={{ fontSize: '0.78rem' }}>{order.customerName || order.customerEmail}</TableCell>
+                  <TableCell sx={{ fontSize: '0.78rem' }}>{order.items?.length} items</TableCell>
+                  <TableCell sx={{ fontSize: '0.78rem', fontWeight: 600 }}>{formatCurrency(order.total)}</TableCell>
                   <TableCell>
                     <Chip
-                      label={order.paymentStatus === 'paid' ? 'Paid' : 'Pending'}
+                      label={order.paymentMethod === 'cod' ? 'COD' : 'Online'}
                       size="small"
-                      sx={{
-                        fontSize: '0.65rem', height: 18,
-                        background: order.paymentStatus === 'paid' ? `${ZAP_COLORS.accentGreen}18` : `${ZAP_COLORS.warning}18`,
-                        color: order.paymentStatus === 'paid' ? ZAP_COLORS.accentGreen : ZAP_COLORS.warning,
-                      }}
+                      sx={{ fontSize: '0.65rem', height: 18, background: `${ZAP_COLORS.info}18`, color: ZAP_COLORS.info }}
                     />
                   </TableCell>
                   <TableCell>
                     <Chip
                       label={ORDER_STATUSES.find((s) => s.key === order.status)?.label || order.status}
                       size="small"
-                      sx={{
-                        fontSize: '0.65rem', height: 18,
-                        background: `${statusColor}18`, color: statusColor,
-                      }}
+                      sx={{ fontSize: '0.65rem', height: 18, background: `${statusColor}18`, color: statusColor }}
                     />
                   </TableCell>
                   <TableCell sx={{ fontSize: '0.72rem', color: ZAP_COLORS.textMuted }}>

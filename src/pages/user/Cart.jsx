@@ -18,7 +18,7 @@ const Cart = () => {
   const { user } = useAuth();
   const {
     items, coupon, setCoupon, updateQuantity, removeFromCart,
-    subtotal, discount, deliveryCharge, total, savings,
+    mrpTotal, subtotal, discount, deliveryCharge, total, savings,
     FREE_DELIVERY_ABOVE,
   } = useCart();
   const [couponInput, setCouponInput] = React.useState('');
@@ -113,46 +113,40 @@ const Cart = () => {
                 <Typography variant="caption" sx={{ color: ZAP_COLORS.primary, fontWeight: 600 }}>
                   Add ₹{FREE_DELIVERY_ABOVE - subtotal} more for FREE delivery!
                 </Typography>
-                <Box sx={{
-                  mt: 0.8, height: 5, borderRadius: 3,
-                  background: `${ZAP_COLORS.primary}20`,
-                  overflow: 'hidden',
-                }}>
-                  <Box sx={{
-                    height: '100%', borderRadius: 3,
-                    width: `${Math.min((subtotal / FREE_DELIVERY_ABOVE) * 100, 100)}%`,
-                    background: `linear-gradient(90deg, ${ZAP_COLORS.primary}, ${ZAP_COLORS.accent})`,
-                    transition: 'width 0.4s',
-                  }} />
-                </Box>
               </Box>
             )}
 
+            {/* Cart items */}
             <Paper elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3, overflow: 'hidden' }}>
               {items.map((item, idx) => (
                 <React.Fragment key={item.id}>
-                  <Box sx={{ p: 2, display: 'flex', gap: 1.5, alignItems: 'center' }}>
+                  <Box sx={{ p: 2, display: 'flex', gap: 2, alignItems: 'flex-start' }}>
+                    {/* Image */}
                     <Box
                       component="img"
-                      src={item.images?.[0] || `https://via.placeholder.com/80x80/FFF8F5/FF6B35?text=${item.name?.[0]}`}
+                      src={item.images?.[0] || `https://via.placeholder.com/80x80/FFF8F5/FF6B35?text=${encodeURIComponent(item.name?.slice(0, 2) || 'P')}`}
                       alt={item.name}
-                      sx={{ width: 72, height: 72, objectFit: 'contain', borderRadius: 2, flexShrink: 0, background: `${ZAP_COLORS.primary}06` }}
+                      sx={{ width: 72, height: 72, borderRadius: 2, objectFit: 'cover', flexShrink: 0 }}
                     />
+                    {/* Info */}
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       <Typography variant="body2" fontWeight={600} noWrap>{item.name}</Typography>
-                      {item.unit && <Typography variant="caption" color="text.secondary">{item.unit}</Typography>}
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, mt: 0.5 }}>
-                        <Typography fontWeight={700} color="primary" fontSize="0.95rem">
+                      {item.unit && (
+                        <Typography variant="caption" color="text.secondary">{item.unit}</Typography>
+                      )}
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                        <Typography variant="body2" fontWeight={700} color="primary">
                           ₹{item.discountedPrice || item.mrp}
                         </Typography>
                         {item.discountedPrice && item.mrp > item.discountedPrice && (
-                          <Typography variant="caption" sx={{ textDecoration: 'line-through', color: ZAP_COLORS.textMuted }}>
+                          <Typography variant="caption" sx={{ textDecoration: 'line-through', color: 'text.secondary' }}>
                             ₹{item.mrp}
                           </Typography>
                         )}
                       </Box>
                     </Box>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+                    {/* Actions */}
+                    <Box sx={{ flexDirection: 'column', alignItems: 'flex-end', gap: 1, display: 'flex' }}>
                       <IconButton size="small" onClick={() => removeFromCart(item.id)} sx={{ color: ZAP_COLORS.textMuted, p: 0.3 }}>
                         <Delete fontSize="small" />
                       </IconButton>
@@ -212,22 +206,29 @@ const Cart = () => {
               <Divider sx={{ mb: 2 }} />
 
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.2 }}>
+                {/* MRP Total — show full MRP before discounts */}
                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <Typography variant="body2" color="text.secondary">Subtotal</Typography>
-                  <Typography variant="body2" fontWeight={500}>₹{subtotal}</Typography>
+                  <Typography variant="body2" color="text.secondary">MRP Total</Typography>
+                  <Typography variant="body2" fontWeight={500}>₹{mrpTotal}</Typography>
                 </Box>
-                {discount > 0 && (
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2" color="success.main">Coupon Discount</Typography>
-                    <Typography variant="body2" color="success.main" fontWeight={600}>-₹{discount}</Typography>
-                  </Box>
-                )}
+
+                {/* Product savings (MRP → selling price discount) */}
                 {savings > 0 && (
                   <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                     <Typography variant="body2" color="success.main">Product Savings</Typography>
                     <Typography variant="body2" color="success.main" fontWeight={600}>-₹{savings}</Typography>
                   </Box>
                 )}
+
+                {/* Coupon discount */}
+                {discount > 0 && (
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Typography variant="body2" color="success.main">Coupon Discount</Typography>
+                    <Typography variant="body2" color="success.main" fontWeight={600}>-₹{discount}</Typography>
+                  </Box>
+                )}
+
+                {/* Delivery */}
                 <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                   <Typography variant="body2" color="text.secondary">Delivery</Typography>
                   <Typography variant="body2" fontWeight={500} color={deliveryCharge === 0 ? 'success.main' : 'text.primary'}>
@@ -243,6 +244,7 @@ const Cart = () => {
                 <Typography fontWeight={800} fontSize="1.2rem" color="primary">₹{total}</Typography>
               </Box>
 
+              {/* Proceed to checkout — redirect to login only here, not on add-to-cart */}
               <Button
                 fullWidth variant="contained" size="large"
                 startIcon={<ShoppingBag />}
