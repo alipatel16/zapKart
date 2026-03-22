@@ -1,20 +1,8 @@
 rules_version = '2';
 
-// ================================================================
-// ZAP DELIVERY — FIRESTORE SECURITY RULES
-//
-// Data ownership model:
-//   GLOBAL  → banners, categories, coupons, settings, stores
-//   STORE-SCOPED → products, orders, purchases, inventory
-//
-// Read rules use least-privilege: only what the client needs.
-// Write rules require admin role for all sensitive collections.
-// ================================================================
-
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── Helpers ──────────────────────────────────────────────
     function isAuthed() {
       return request.auth != null;
     }
@@ -32,9 +20,6 @@ service cloud.firestore {
       return request.resource.data;
     }
 
-    // ── USERS ─────────────────────────────────────────────────
-    // Users can only read/write their own document.
-    // Admins can read all user documents.
     match /users/{userId} {
       allow read:   if isOwner(userId) || isAdmin();
       allow create: if isAuthed() && request.auth.uid == userId;
@@ -42,90 +27,71 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // ── STORES ────────────────────────────────────────────────
-    // GLOBAL — store list is public so the app can detect service
-    // area without the user being logged in.
     match /stores/{storeId} {
       allow read:  if true;
       allow write: if isAdmin();
     }
 
-    // ── CATEGORIES ────────────────────────────────────────────
-    // GLOBAL — same category tree is shared across all stores.
-    // Category images are stored in Firebase Storage /categories/
     match /categories/{categoryId} {
       allow read:  if true;
       allow write: if isAdmin();
     }
 
-    // ── BANNERS ───────────────────────────────────────────────
-    // GLOBAL — marketing banners / carousel images are app-wide
-    // campaigns, not tied to any individual store.
-    // Banner images are stored in Firebase Storage /banners/
     match /banners/{bannerId} {
       allow read:  if true;
       allow write: if isAdmin();
     }
 
-    // ── COUPONS ───────────────────────────────────────────────
-    // GLOBAL — coupon codes work across all stores.
-    // Authenticated users can read active coupons to validate them.
     match /coupons/{couponId} {
       allow read:  if isAuthed();
       allow write: if isAdmin();
     }
 
-    // ── SETTINGS ──────────────────────────────────────────────
-    // GLOBAL — app-wide config (delivery charge, free delivery
-    // threshold, app name, etc.)
     match /settings/{settingId} {
       allow read:  if true;
       allow write: if isAdmin();
     }
 
-    // ── PRODUCTS ──────────────────────────────────────────────
-    // STORE-SCOPED — availability and stock differ per store.
-    // Product images are stored in Firebase Storage /products/
-    // Public read: anyone can browse the product catalogue.
     match /products/{productId} {
-      allow read:  if true;
-      allow write: if isAdmin();
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() ||
+        (
+          isAuthed() &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['stock', 'updatedAt'])
+        );
     }
 
-    // ── ORDERS ────────────────────────────────────────────────
-    // STORE-SCOPED — each order belongs to one store.
-    // Users can only read/create their own orders.
-    // Users can cancel their own order only if status == 'placed'.
-    // Admins can read/update/delete any order.
     match /orders/{orderId} {
       allow read: if isAuthed() &&
         (request.auth.uid == resource.data.userId || isAdmin());
 
       allow create: if isAuthed() &&
         request.auth.uid == incomingData().userId &&
-        incomingData().storeId != null;   // must have a storeId
+        incomingData().storeId != null;
 
       allow update: if isAdmin() ||
         (isAuthed() &&
          request.auth.uid == resource.data.userId &&
-         resource.data.status == 'placed' &&
+         (resource.data.status == 'placed' || resource.data.status == 'confirmed') &&
          incomingData().status == 'cancelled');
 
       allow delete: if isAdmin();
     }
 
-    // ── PURCHASES ─────────────────────────────────────────────
-    // STORE-SCOPED — purchase records are per store.
-    // Only admins can read or write purchase records.
     match /purchases/{purchaseId} {
       allow read, write: if isAdmin();
     }
 
-    // ── INVENTORY ─────────────────────────────────────────────
-    // STORE-SCOPED — stock levels are per store.
-    // Only admins can manage inventory.
     match /inventory/{itemId} {
       allow read, write: if isAdmin();
+    }
+
+    match /fcmTokens/{tokenId} {
+      allow read:          if isAdmin();
+      allow create, update: if isAuthed();
+      allow delete:        if isAuthed();
     }
   }
 }
