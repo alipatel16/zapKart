@@ -5,10 +5,13 @@ const isLocalhost = Boolean(
 );
 
 // Registered ONCE at module level — never accumulates, never fires twice
-let reloading = false;
 navigator.serviceWorker?.addEventListener('controllerchange', () => {
-  if (reloading) return;
-  reloading = true;
+  // If we already reloaded for a SW update in this browser session, don't reload again.
+  if (sessionStorage.getItem('sw-reloading')) {
+    sessionStorage.removeItem('sw-reloading'); // clear for next genuine update
+    return;
+  }
+  sessionStorage.setItem('sw-reloading', '1');
   window.location.reload();
 });
 

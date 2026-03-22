@@ -1,6 +1,5 @@
 // ============================================================
-// src/hooks/useAdminOrderNotifications.js
-// ── Beep sound via Web Audio API (no MP3 file needed)
+// src/pages/hooks/useAdminOrderNotifications.js
 // ── Stacked toasts for multiple simultaneous orders
 // ── "Clear All" button when more than one toast is shown
 // ============================================================
@@ -14,14 +13,13 @@ import { useStore } from '../../context/StoreContext';
 
 // ── Sound: unlock on first user interaction (Chrome autoplay policy) ──
 let audioUnlocked = false;
-let audioCtx = null;
 
 const unlockAudio = () => {
   if (audioUnlocked) return;
   audioUnlocked = true;
   try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    audioCtx.resume();
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    ctx.resume();
   } catch (e) {}
   document.removeEventListener('click', unlockAudio);
   document.removeEventListener('keydown', unlockAudio);
@@ -148,7 +146,6 @@ const showInAppToast = (order) => {
     discount, paymentMethod, couponCode,
   } = order;
 
-  // Items pill list — cap at 4 then "+N more"
   const MAX_ITEMS = 4;
   const visibleItems = items.slice(0, MAX_ITEMS);
   const extraCount  = items.length - MAX_ITEMS;
@@ -174,163 +171,103 @@ const showInAppToast = (order) => {
     ">+${extraCount} more</span>
   ` : '';
 
-  // Billing summary (only show if there are interesting breakdowns)
   const hasBreakdown = subtotal && (discount || Number(deliveryCharge) > 0);
   const billRows = hasBreakdown ? `
-    <div style="
-      margin-top: 8px;
-      padding-top: 8px;
-      border-top: 0.5px solid rgba(0,0,0,0.08);
-      display: flex;
-      flex-direction: column;
-      gap: 3px;
-    ">
-      ${subtotal ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#777;">
-        <span>Subtotal</span><span>₹${Number(subtotal).toFixed(2)}</span>
-      </div>` : ''}
-      ${discount ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#2a7d4f;">
-        <span>Discount${couponCode ? ` (${couponCode})` : ''}</span>
-        <span>−₹${Number(discount).toFixed(2)}</span>
-      </div>` : ''}
-      ${deliveryCharge !== undefined ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#777;">
-        <span>Delivery</span>
-        <span>${Number(deliveryCharge) === 0
-          ? '<span style="color:#2a7d4f;">Free</span>'
-          : '₹' + Number(deliveryCharge).toFixed(2)}</span>
-      </div>` : ''}
+    <div style="margin-top:8px;padding-top:8px;border-top:0.5px solid rgba(0,0,0,0.08);display:flex;flex-direction:column;gap:3px;">
+      ${subtotal ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#888;"><span>Subtotal</span><span>₹${Number(subtotal).toFixed(2)}</span></div>` : ''}
+      ${Number(deliveryCharge) > 0 ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#888;"><span>Delivery</span><span>₹${Number(deliveryCharge).toFixed(2)}</span></div>` : ''}
+      ${discount ? `<div style="display:flex;justify-content:space-between;font-size:11px;color:#06D6A0;"><span>Discount${couponCode ? ` (${couponCode})` : ''}</span><span>-₹${Number(discount).toFixed(2)}</span></div>` : ''}
     </div>
   ` : '';
 
-  // Address
-  const addressLine = address
-    ? [address.line1, address.line2, address.city, address.state, address.pincode]
-        .filter(Boolean).join(', ')
-    : '';
-
-  // Payment badge
-  const isPaid = paymentMethod === 'razorpay';
-  const paymentBadge = isPaid
-    ? `<span style="font-size:11px;font-weight:500;background:#E6F1FB;color:#185FA5;padding:2px 7px;border-radius:20px;">Paid</span>`
-    : `<span style="font-size:11px;font-weight:500;background:#EAF3DE;color:#3B6D11;padding:2px 7px;border-radius:20px;">COD</span>`;
+  const addressParts = [address.flat, address.building, address.area, address.landmark].filter(Boolean);
+  const addressLine = addressParts.join(', ');
 
   const toastId = `zap-toast-${orderId}`;
-  const initials = getInitials(customerName);
+  if (document.getElementById(toastId)) return;
 
   const wrapper = document.createElement('div');
-  wrapper.className = 'zap-single-toast';
   wrapper.id = toastId;
+  wrapper.className = 'zap-single-toast';
   wrapper.style.cssText = `
-    width: 320px;
-    background: #ffffff;
-    border: 0.5px solid rgba(0,0,0,0.14);
-    border-left: 3px solid #D85A30;
+    width: 300px;
+    background: #fff;
     border-radius: 12px;
+    border: 0.5px solid rgba(0,0,0,0.12);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.08);
     overflow: hidden;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.10);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    animation: zapSlideIn 0.28s cubic-bezier(0.22,1,0.36,1);
-    flex-shrink: 0;
+    animation: zapToastSlideIn 0.3s cubic-bezier(0.22,1,0.36,1) both;
   `;
 
-  wrapper.innerHTML = `
-    <style>
-      @keyframes zapSlideIn {
-        from { opacity:0; transform:translateX(40px) scale(0.97); }
-        to   { opacity:1; transform:translateX(0) scale(1); }
-      }
-    </style>
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes zapToastSlideIn {
+      from { opacity: 0; transform: translateX(20px) scale(0.96); }
+      to   { opacity: 1; transform: translateX(0)   scale(1);    }
+    }
+  `;
+  if (!document.getElementById('zap-toast-styles')) {
+    style.id = 'zap-toast-styles';
+    document.head.appendChild(style);
+  }
 
+  const pmBadgeColor = paymentMethod === 'cod' ? '#666' : '#0066cc';
+  const pmLabel = paymentMethod === 'cod' ? 'COD' : 'PAID';
+
+  wrapper.innerHTML = `
     <!-- Header -->
-    <div style="
-      padding: 10px 12px;
-      display: flex; align-items: center; justify-content: space-between;
-      border-bottom: 0.5px solid rgba(0,0,0,0.07);
-    ">
+    <div style="padding:10px 12px 8px;background:linear-gradient(135deg,#FF6B35,#E55A25);display:flex;align-items:center;justify-content:space-between;">
       <div style="display:flex;align-items:center;gap:8px;">
-        <div style="
-          width: 28px; height: 28px;
-          border-radius: 7px;
-          background: #FAECE7;
-          display: flex; align-items: center; justify-content: center;
-          flex-shrink: 0;
-        ">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-            <path d="M2 2h2l1.5 7h7l1.5-5H5" stroke="#D85A30" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            <circle cx="7" cy="13" r="1" fill="#D85A30"/>
-            <circle cx="12" cy="13" r="1" fill="#D85A30"/>
-          </svg>
-        </div>
+        <span style="font-size:16px;">🛍️</span>
         <div>
-          <p style="margin:0;font-size:13px;font-weight:600;color:#111;">
-            New order <span style="color:#D85A30;">#${orderNumber}</span>
-          </p>
-          <p style="margin:0;font-size:11px;color:#888;">Just now</p>
+          <p style="margin:0;font-size:13px;font-weight:700;color:#fff;">New Order #${orderNumber || orderId.slice(-6).toUpperCase()}</p>
+          <p style="margin:0;font-size:10px;color:rgba(255,255,255,0.8);">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;">
-        ${paymentBadge}
-        <button class="zap-close-btn" style="
-          border: none; background: none; color: #aaa;
-          cursor: pointer; font-size: 15px; line-height: 1;
-          padding: 2px 4px; border-radius: 4px;
-        ">✕</button>
+        <span style="font-size:10px;font-weight:600;color:${pmBadgeColor};background:#fff;padding:2px 6px;border-radius:4px;">${pmLabel}</span>
+        <button class="zap-close-btn" style="background:rgba(255,255,255,0.2);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;line-height:1;padding:0;">×</button>
       </div>
     </div>
 
     <!-- Body -->
-    <div style="padding: 10px 12px; display: flex; flex-direction: column; gap: 9px;">
-
-      <!-- Customer + total -->
-      <div style="display:flex;align-items:center;justify-content:space-between;">
+    <div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
+      <!-- Customer row -->
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
         <div style="display:flex;align-items:center;gap:8px;">
-          <div style="
-            width: 28px; height: 28px; border-radius: 50%;
-            background: #EEEDFE;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 11px; font-weight: 600; color: #534AB7;
-            flex-shrink: 0;
-          ">${initials}</div>
+          <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#FF6B35,#E55A25);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <span style="font-size:12px;font-weight:700;color:#fff;">${getInitials(customerName)}</span>
+          </div>
           <div>
-            <p style="margin:0;font-size:13px;font-weight:600;color:#111;">${customerName || '—'}</p>
+            <p style="margin:0;font-size:13px;font-weight:600;color:#111;">${customerName || 'Customer'}</p>
             ${customerPhone ? `<p style="margin:0;font-size:11px;color:#888;">${customerPhone}</p>` : ''}
           </div>
         </div>
         <p style="margin:0;font-size:16px;font-weight:600;color:#111;">₹${Number(total).toFixed(2)}</p>
       </div>
 
-      <!-- Bill breakdown (optional) -->
       ${billRows}
 
-      <!-- Items -->
       <div style="display:flex;flex-wrap:wrap;gap:4px;">
         ${itemPills}${extraPill}
       </div>
 
-      <!-- Address -->
       ${addressLine ? `
       <div style="display:flex;align-items:flex-start;gap:5px;">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="margin-top:1px;flex-shrink:0;">
-          <path d="M8 1.5C5.51 1.5 3.5 3.51 3.5 6c0 3.75 4.5 8.5 4.5 8.5S12.5 9.75 12.5 6C12.5 3.51 10.49 1.5 8 1.5zm0 6a1.5 1.5 0 110-3 1.5 1.5 0 010 3z"
-            fill="#aaa"/>
+          <path d="M8 1.5C5.51 1.5 3.5 3.51 3.5 6c0 3.75 4.5 8.5 4.5 8.5S12.5 9.75 12.5 6C12.5 3.51 10.49 1.5 8 1.5zm0 6a1.5 1.5 0 110-3 1.5 1.5 0 010 3z" fill="#aaa"/>
         </svg>
         <p style="margin:0;font-size:11px;color:#888;line-height:1.5;">${addressLine}</p>
       </div>` : ''}
-
     </div>
 
     <!-- Footer -->
-    <div style="padding: 8px 12px; border-top: 0.5px solid rgba(0,0,0,0.07);">
-      <button class="zap-view-btn" style="
-        width: 100%; padding: 7px; cursor: pointer;
-        border: 0.5px solid #D85A30; border-radius: 7px;
-        background: #FAECE7; color: #993C1D;
-        font-size: 12px; font-weight: 500;
-        font-family: inherit;
-      ">View in dashboard</button>
+    <div style="padding:8px 12px;border-top:0.5px solid rgba(0,0,0,0.07);">
+      <button class="zap-view-btn" style="width:100%;padding:7px;cursor:pointer;border:0.5px solid #D85A30;border-radius:7px;background:#FAECE7;color:#993C1D;font-size:12px;font-weight:500;font-family:inherit;">View in dashboard</button>
     </div>
   `;
 
-  // Events
   wrapper.querySelector('.zap-close-btn').addEventListener('click', () => {
     wrapper.remove();
     updateClearAllButton();
@@ -347,7 +284,6 @@ const showInAppToast = (order) => {
   container.appendChild(wrapper);
   updateClearAllButton();
 
-  // Auto-dismiss after 30s
   setTimeout(() => {
     const el = document.getElementById(toastId);
     if (el) {
@@ -359,18 +295,42 @@ const showInAppToast = (order) => {
   }, 30000);
 };
 
-// ── OS notification (background tab) ─────────────────────────
+// ── OS notification ───────────────────────────────────────────
+// ✅ FIX: Use registration.showNotification() instead of `new Notification()`.
+// On Android PWA (installed to home screen), `new Notification()` is blocked
+// by Chrome — it requires a service worker context. Samsung is especially
+// strict about this. Using the SW registration works on both Android & iOS.
 const showOSNotification = ({ orderNumber, customerName, total, orderId }) => {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  try {
-    const n = new Notification(`New order #${orderNumber}`, {
-      body: `${customerName} · ₹${Number(total).toFixed(2)}`,
-      icon: '/logo192.png',
-      tag: orderId,
-      renotify: true,
+  if (!('serviceWorker' in navigator)) return;
+
+  const title = `New order #${orderNumber || orderId?.slice(-6).toUpperCase()}`;
+  const body  = `${customerName} · ₹${Number(total).toFixed(2)}`;
+
+  navigator.serviceWorker.ready
+    .then((registration) => {
+      // showNotification() works in both browser tab AND installed PWA mode on Android
+      return registration.showNotification(title, {
+        body,
+        icon:     '/logo192.png',
+        badge:    '/badge-72.png',
+        tag:      orderId || 'new-order',
+        renotify: true,
+        vibrate:  [200, 100, 200],
+        data:     { url: '/admin/orders', orderId },
+        actions: [
+          { action: 'view',    title: '👀 View Order' },
+          { action: 'dismiss', title: '✕ Dismiss'    },
+        ],
+      });
+    })
+    .catch(() => {
+      // Last-resort fallback for browsers where SW isn't ready yet
+      try {
+        const n = new Notification(title, { body, icon: '/logo192.png', tag: orderId, renotify: true });
+        n.onclick = () => { window.focus(); window.location.href = '/admin/orders'; };
+      } catch { /* ignore */ }
     });
-    n.onclick = () => { window.focus(); window.location.href = '/admin/orders'; };
-  } catch (e) {}
 };
 
 // ── Request permission ────────────────────────────────────────
@@ -430,10 +390,10 @@ export const useAdminOrderNotifications = () => {
           playSound();
           showInAppToast(order);
           showOSNotification({
-            orderNumber: order.orderNumber,
+            orderNumber:  order.orderNumber,
             customerName: order.customerName,
-            total: order.total,
-            orderId: docSnap.id,
+            total:        order.total,
+            orderId:      docSnap.id,
           });
 
           window.dispatchEvent(new CustomEvent('zap:new-order', { detail: order }));
