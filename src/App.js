@@ -8,6 +8,7 @@ import { StoreProvider } from './context/StoreContext';
 import ActiveOrdersBar from './components/user/ActiveOrdersBar';
 import ErrorBoundary from './components/ErrorBoundary';
 import { useNotifications } from './hooks/useNotifications';
+import PageTransition from './components/common/PageTransition';
 
 // ── Common ───────────────────────────────────────────────────────────────────
 const Header       = lazy(() => import(/* webpackPrefetch: true */ './components/common/Header'));
@@ -97,7 +98,11 @@ const UserLayout = ({ children }) => (
         <Header />
       </Suspense>
       <Box component="main" sx={{ flex: 1 }}>
-        {children}
+        {/* PageTransition gives a smooth fade+slide-up on every route change,
+            eliminating the white-flash caused by lazy-loaded chunks. */}
+        <PageTransition>
+          {children}
+        </PageTransition>
       </Box>
       <Suspense fallback={null}>
         <ActiveOrdersBar />

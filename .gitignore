@@ -18,12 +18,13 @@ pnpm-debug.log*
 .env.test.local
 .env.production.local
 .env.production
+.env.test
 
 # Firebase
 .firebaserc
+.firebase/
 firebase-debug.log
 firebase-debug.*.log
-.firebase/
 firestore-debug.log
 ui-debug.log
 database-debug.log
@@ -42,147 +43,17 @@ functions/.env
 .parcel-cache/
 .next/
 .nuxt/
-
-# IDE and Editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
-
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage directory used by tools like istanbul
-coverage/
-*.lcov
-
-# ESLint cache
-.eslintcache
-
-# Optional npm cache directory
-.npm
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# dotenv environment variables file
-.env
-.env.test
-
-# Temporary folders
-tmp/
-temp/
-
-# Optional npm cache directory
-.npm
-
-# Optional eslint cache
-.eslintcache
-
-# Microbundle cache
+/.rollup.cache
+/.rts2_cache*
 .rpt2_cache/
 .rts2_cache_cjs/
 .rts2_cache_es/
 .rts2_cache_umd/
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# parcel-bundler cache (https://parceljs.org/)
-.cache
-.parcel-cache
-
-# Next.js build output
-.next
-
-# Nuxt.js build / generate output
-.nuxt
-dist
-
-# Gatsby files
-.cache/
-
-# Storybook build outputs
-.out
-.storybook-out
-
-# Rollup.js default build output
-dist/
-
-# Uncomment the public line if your project uses Gatsby
-# https://nextjs.org/blog/next-9-1#public-directory-support
-# https://create-react-app.dev/docs/using-the-public-folder/#adding-assets-outside-of-the-module-system
-# public
-
-# Storybook build outputs
-.out
-.storybook-out
-
-# vuepress build output
-.vuepress/dist
-
-# Serverless directories
-.serverless/
-
-# FuseBox cache
 .fusebox/
 
-# DynamoDB Local files
-.dynamodb/
-
-# TernJS port file
-.tern-port
-
-# Stores VSCode versions used for testing VSCode extensions
-.vscode-test
-
-# Temporary files
-*.tmp
-*.temp
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Windows
-Thumbs.db
-Thumbs.db:encryptable
-ehthumbs.db
-ehthumbs_vista.db
-*.stackdump
-[Dd]esktop.ini
-
-# Linux
-*~
-
-# Android Studio
+# IDE and Editor files
+.vscode/
+.idea/
 *.iml
 .gradle
 /local.properties
@@ -192,79 +63,89 @@ ehthumbs_vista.db
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
+.vscode-test
+*.swp
+*.swo
 
-# Firebase Hosting
-.firebase/
+# Logs
+logs/
+*.log
 
-# Firebase Emulator
-firebase-debug.log*
-ui-debug.log
-database-debug.log
-firestore-debug.log
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+*~
+
+# ESLint / Prettier (generated, not config)
+.eslintcache
+
+# Package manager
+.npm
+.yarn-integrity
+.node_repl_history
+
+# Webpack
+.webpack/
+
+# PWA — only ignore the COMPILED output files in /build, NOT the source
+# src/service-worker.js is your source — it must be committed!
+/build/service-worker.js
+/build/service-worker.js.map
+/build/workbox-*.js
+/build/workbox-*.js.map
+
+# Storybook
+.out
+.storybook-out
+
+# Serverless
+.serverless/
+
+# DynamoDB Local
+.dynamodb/
+
+# Tern
+.tern-port
+
+# Sitemap
+sitemap.xml
+sitemap.xml.gz
+
+# Performance / bundle analysis
+performance.json
+bundle-analyzer-report.html
 
 # Backup files
 *.bak
 *.backup
 *.orig
 
-# Package manager lock files (uncomment if you want to ignore)
-# package-lock.json
-# yarn.lock
-
-# Build tools
-/.rollup.cache
-/.rts2_cache*
-/.cache
-
-# Webpack
-.webpack/
-
-# PWA files
-sw.js
-sw.js.map
-workbox-*.js
-workbox-*.js.map
-
-# Sitemap
-sitemap.xml
-sitemap.xml.gz
-
-# Optional files
-.htaccess
-
-# Service Worker
-service-worker.js
-
-# Web App Manifest
-# manifest.json
-# public/firebase-messaging-sw.js
-# firestore.indexes.json
-# firestore.rules
-# storage.rules
-
-# Workbox
-workbox-config.js
-
-# Performance monitoring
-performance.json
-
-# Bundle analysis
-bundle-analyzer-report.html
-
 # TypeScript (if added later)
 *.tsbuildinfo
 
-# ESLint
-.eslintrc.js
-.eslintrc.json
-
-# Prettier
-.prettierrc
-.prettierrc.js
-.prettierrc.json
-
-# Husky (if added later)
-.husky/
-
 # Package manager lock files
 package-lock.json
+# yarn.lock  ← uncomment if you want to ignore yarn lockfile
+
+# .firestore.rules
+# .firestore.indexes.json
+# .storage.rules
