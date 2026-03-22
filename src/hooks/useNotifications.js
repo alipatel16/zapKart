@@ -69,17 +69,14 @@ export const useNotifications = () => {
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') return false;
 
-      // ✅ FIX: Do NOT call navigator.serviceWorker.register() here.
+      // ✅ Do NOT call navigator.serviceWorker.register() here.
       // That creates a second competing registration on Android and causes
       // FCM tokens to be tied to the wrong SW scope, breaking push on Samsung.
       //
       // Instead, wait for the already-registered SW (registered in index.js
       // via serviceWorkerRegistration.js) to become active, then use it.
-      // The firebase-messaging-sw.js is registered separately below only if
-      // the main SW is not controlling (e.g. first install before activation).
       let swRegistration;
       try {
-        // Try to use the already-active controlling SW first
         swRegistration = await navigator.serviceWorker.ready;
       } catch {
         // Fallback: explicitly register the messaging SW
@@ -116,6 +113,7 @@ export const useNotifications = () => {
   }, [user?.uid, resolvedStoreId]); // re-run when admin switches store
 
   // ── Foreground FCM messages (tab is OPEN & active) ───────
+  // Branches on data.type to handle admin and user notifications separately.
   useEffect(() => {
     if (!user || !('Notification' in window)) return;
     let unsub;
@@ -123,24 +121,54 @@ export const useNotifications = () => {
       const messaging = getMessaging();
       unsub = onMessage(messaging, (payload) => {
         const { title, body } = payload.notification || {};
+        const data = payload.data || {};
 
+        // ── User: order tracking / delivery status update ───────────────────
+        // Shows a quiet notification and fires a custom DOM event so
+        // OrderHistory can refresh its list live without a manual pull.
+        // Does NOT play the loud order-alert sound — that's for admins only.
+        if (data.type === 'order_tracking') {
+          if (Notification.permission === 'granted') {
+            navigator.serviceWorker.ready.then((registration) => {
+              registration.showNotification(title || '📦 Order Update', {
+                body:     body || 'Your order status has been updated.',
+                icon:     '/logo192.png',
+                tag:      `order-tracking-${data.orderId}`,
+                renotify: true,
+                data:     { url: '/orders', orderId: data.orderId, type: 'order_tracking' },
+              });
+            }).catch(() => {
+              try {
+                const n = new Notification(title || '📦 Order Update', { body, icon: '/logo192.png' });
+                n.onclick = () => { window.focus(); window.location.href = '/orders'; };
+              } catch { /* ignore */ }
+            });
+          }
+
+          // Dispatch custom event so OrderHistory.jsx can refresh live
+          window.dispatchEvent(new CustomEvent('zap:order-status-changed', {
+            detail: { orderId: data.orderId, status: data.status },
+          }));
+          return;
+        }
+
+        // ── Admin: new order alert ──────────────────────────────────────────
+        // Plays the loud alert sound and shows an OS notification.
         playNotificationSound('/sounds/order-alert.mp3');
 
-        // ✅ FIX: Use ServiceWorkerRegistration.showNotification() instead of
-        // `new Notification()`. On installed Android PWAs, `new Notification()`
-        // is blocked (requires a user gesture or is fully disabled in PWA mode).
-        // showNotification() via the SW works reliably on both Android & iOS.
         if (Notification.permission === 'granted') {
+          // ✅ Use showNotification() via SW instead of new Notification().
+          // On installed Android PWAs, new Notification() is blocked.
+          // showNotification() via the SW works reliably on both Android & iOS.
           navigator.serviceWorker.ready.then((registration) => {
             registration.showNotification(title || '🛍️ New Order – ZAP Delivery', {
               body,
               icon:     '/logo192.png',
-              tag:      payload.data?.orderId || 'zap',
+              tag:      data.orderId || 'zap',
               renotify: true,
-              data:     { url: '/admin/orders' },
+              data:     { url: '/admin/orders', type: 'new_order' },
             });
           }).catch(() => {
-            // Fallback to direct Notification if SW isn't ready
             try {
               const n = new Notification(title || '🛍️ New Order – ZAP Delivery', { body, icon: '/logo192.png' });
               n.onclick = () => { window.focus(); window.location.href = '/admin/orders'; };
@@ -154,6 +182,8 @@ export const useNotifications = () => {
   }, [user?.uid]);
 
   // ── Listen for messages posted by the service worker ──────
+  // The SW sends NEW_ORDER when admin clicks a background notification
+  // and ORDER_STATUS_CHANGED when a user clicks their tracking notification.
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
 
@@ -161,6 +191,12 @@ export const useNotifications = () => {
       if (event.data?.type === 'NEW_ORDER') {
         playNotificationSound('/sounds/order-alert.mp3');
         window.dispatchEvent(new CustomEvent('zap:new-order', { detail: event.data }));
+      }
+
+      if (event.data?.type === 'ORDER_STATUS_CHANGED') {
+        window.dispatchEvent(new CustomEvent('zap:order-status-changed', {
+          detail: { orderId: event.data.orderId },
+        }));
       }
     };
 

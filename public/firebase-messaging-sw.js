@@ -19,24 +19,54 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// ── Background message handler ──────────────────────────────
-// Fires when a FCM push arrives and the tab is NOT in the foreground
+// ── Background message handler ──────────────────────────────────────────────
+// Fires when a FCM push arrives and the tab is NOT in the foreground.
+// We branch on data.type to show the right notification for:
+//   • 'order_tracking' → user delivery status update
+//   • anything else    → admin new-order alert (existing behaviour)
 messaging.onBackgroundMessage((payload) => {
-
   const { title, body, image } = payload.notification || {};
   const data = payload.data || {};
 
+  // ── User: order tracking / delivery status update ─────────────────────────
+  // Uses tag: order-tracking-{orderId} so each new status update REPLACES
+  // the previous notification in the Android notification panel — just like
+  // Swiggy / Zomato showing a single live-updating delivery card.
+  if (data.type === 'order_tracking') {
+    self.registration.showNotification(title || '📦 Order Update', {
+      body:     body || 'Your order status has been updated.',
+      icon:     '/logo192.png',
+      badge:    '/badge-72.png',
+      tag:      `order-tracking-${data.orderId}`,
+      renotify: true,
+      vibrate:  [200, 100, 200],
+      data: {
+        url:     '/orders',
+        orderId: data.orderId || '',
+        type:    'order_tracking',
+      },
+      actions: [
+        { action: 'track',   title: '📦 Track Order' },
+        { action: 'dismiss', title: '✕ Dismiss'      },
+      ],
+    });
+    return;
+  }
+
+  // ── Admin: new order alert ────────────────────────────────────────────────
+  // Note: 'sound' property is intentionally omitted — it caused Android to
+  // show a media-player notification for the MP3. OS default sound plays fine.
   self.registration.showNotification(title || '🛍️ New Order – ZAP Delivery', {
-    body:    body    || 'A customer just placed an order!',
-    icon:    image   || '/logo192.png',
-    badge:             '/badge-72.png',   // small monochrome icon shown in status bar (Android)
-    tag:     data.orderId || 'new-order', // replaces previous notification with same tag
-    renotify: true,                       // vibrate/sound even when replacing same tag
-    vibrate: [200, 100, 200],             // vibration pattern (mobile)
-    sound:   '/sounds/order-alert.mp3',   // ⚠️ limited browser support; OS default plays as fallback
+    body:     body    || 'A customer just placed an order!',
+    icon:     image   || '/logo192.png',
+    badge:              '/badge-72.png',
+    tag:      data.orderId || 'new-order',
+    renotify: true,
+    vibrate:  [200, 100, 200],
     data: {
       url:     data.adminUrl || '/admin/orders',
       orderId: data.orderId  || '',
+      type:    'new_order',
     },
     actions: [
       { action: 'view',    title: '👀 View Order' },
@@ -45,29 +75,39 @@ messaging.onBackgroundMessage((payload) => {
   });
 });
 
-// ── Notification click handler ──────────────────────────────
+// ── Notification click handler ──────────────────────────────────────────────
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
   if (event.action === 'dismiss') return;
 
-  const targetUrl = (event.notification.data && event.notification.data.url)
-    ? event.notification.data.url
-    : '/admin/orders';
+  const notifData = event.notification.data || {};
+  const targetUrl = notifData.url || '/';
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
-      // Focus existing admin tab if open
+
+      // ── User tracking: focus any existing tab ─────────────
+      if (notifData.type === 'order_tracking') {
+        for (const client of windowClients) {
+          if ('focus' in client) {
+            client.postMessage({ type: 'ORDER_STATUS_CHANGED', orderId: notifData.orderId });
+            client.navigate('/orders');
+            return client.focus();
+          }
+        }
+        if (clients.openWindow) return clients.openWindow('/orders');
+        return;
+      }
+
+      // ── Admin new-order: focus existing admin tab ─────────
       for (const client of windowClients) {
         if (client.url.includes('/admin') && 'focus' in client) {
-          client.postMessage({ type: 'NEW_ORDER', orderId: event.notification.data?.orderId });
+          client.postMessage({ type: 'NEW_ORDER', orderId: notifData.orderId });
           return client.focus();
         }
       }
-      // Otherwise open a new tab
-      if (clients.openWindow) {
-        return clients.openWindow(targetUrl);
-      }
+      if (clients.openWindow) return clients.openWindow(targetUrl);
     })
   );
 });
