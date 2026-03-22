@@ -15,6 +15,9 @@ import { useStore } from '../../context/StoreContext';
 import AdminStoreSelector from '../../components/admin/AdminStoreSelector';
 import { ZAP_COLORS } from '../../theme';
 
+import { useAdminOrderNotifications } from '../hooks/useAdminOrderNotifications';
+
+
 const DRAWER_WIDTH = 230;
 const MINI_WIDTH = 64;
 
@@ -33,6 +36,7 @@ const navItems = [
 ];
 
 const AdminLayout = () => {
+  useAdminOrderNotifications();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [drawerOpen, setDrawerOpen] = useState(!isMobile);
