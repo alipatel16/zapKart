@@ -138,6 +138,22 @@ export const StoreProvider = ({ children }) => {
     else setLocationLoading(false);
   }, []);
 
+  useEffect(() => {
+  if (!navigator.permissions) return;
+  navigator.permissions.query({ name: 'geolocation' }).then((status) => {
+    const evict = () => {
+      if (status.state === 'denied') {
+        localStorage.removeItem(LOCATION_CACHE_KEY);
+        setUserLocation(null);
+        setLocationPermission('denied');
+        setLocationLoading(false);
+      }
+    };
+    evict(); // check immediately on mount
+    status.onchange = evict; // watch for live changes
+  });
+}, []);
+
   // ----- Manually set location (from search / map picker) -----
   const setManualLocation = useCallback((lat, lng, label = '') => {
     const loc = { lat, lng, label };
@@ -153,6 +169,12 @@ export const StoreProvider = ({ children }) => {
       .filter((s) => s.distanceKm <= SERVICE_RADIUS_KM)
       .sort((a, b) => a.distanceKm - b.distanceKm);
   }, [allStores]);
+
+  const clearLocation = useCallback(() => {
+  localStorage.removeItem(LOCATION_CACHE_KEY);
+  setUserLocation(null);
+  setUserSelectedStore(null);
+}, []);
 
   const value = {
     // User
@@ -179,6 +201,7 @@ export const StoreProvider = ({ children }) => {
 
     // Helper — is user in service area?
     isInServiceArea: !!activeUserStore,
+    clearLocation,
   };
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

@@ -233,7 +233,7 @@ const Header = () => {
     { label: 'My Orders',  icon: <History />,  path: '/orders' },
   ];
 
-  const locationText = userLocation?.label || activeUserStore?.name || 'Set Location';
+ const locationText = activeUserStore?.name || userLocation?.label || 'Set Location';
 
   return (
     <>
