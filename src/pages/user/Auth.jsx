@@ -108,6 +108,7 @@ const Auth = () => {
         'auth/weak-password':         'Password must be at least 6 characters',
         'auth/invalid-email':         'Invalid email address',
         'auth/invalid-credential':    'Incorrect email or password',
+        'auth/email-not-verified':    'Please verify your email first. Check your inbox and spam folder.',
       };
       setError(msgs[err.code] || err.message || 'Authentication failed');
     } finally {

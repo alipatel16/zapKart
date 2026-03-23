@@ -343,42 +343,73 @@ const Checkout = () => {
             }}>
               <Typography variant="subtitle1" fontWeight={700} mb={2}>Order Summary</Typography>
 
+              {/* Items list — show MRP per line */}
               {items.map((item) => (
                 <Box key={item.id} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                   <Typography variant="body2" color="text.secondary" sx={{ flex: 1, pr: 1 }} noWrap>
                     {item.name} × {item.quantity}
                   </Typography>
                   <Typography variant="body2" fontWeight={500}>
-                    ₹{(item.discountedPrice || item.mrp) * item.quantity}
+                    ₹{item.mrp * item.quantity}
                   </Typography>
                 </Box>
               ))}
 
               <Divider sx={{ my: 1.5 }} />
 
-              {coupon && (
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                  <Chip label={coupon.code} size="small" color="success" sx={{ fontSize: '0.7rem', height: 20 }} />
-                  <Typography variant="body2" color="success.main" fontWeight={600}>-₹{discount}</Typography>
-                </Box>
-              )}
+              {/* Product savings — only show if there's an actual saving */}
+              {(() => {
+                const mrpTotal      = items.reduce((sum, i) => sum + i.mrp * i.quantity, 0);
+                const savedAmount   = items.reduce((sum, i) => sum + ((i.mrp - (i.discountedPrice || i.mrp)) * i.quantity), 0);
+                return (
+                  <>
+                    {/* MRP subtotal */}
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                      <Typography variant="body2" color="text.secondary">MRP Total</Typography>
+                      <Typography variant="body2" fontWeight={500}>₹{mrpTotal}</Typography>
+                    </Box>
 
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="body2" color="text.secondary">Delivery</Typography>
-                <Typography variant="body2" fontWeight={500} color={deliveryCharge === 0 ? 'success.main' : 'text.primary'}>
-                  {deliveryCharge === 0
-                    ? <Typography component="span" sx={{ color: ZAP_COLORS.accentGreen || '#06D6A0', fontSize: '0.85rem', fontWeight: 600 }}>FREE</Typography>
-                    : `₹${deliveryCharge}`}
-                </Typography>
-              </Box>
+                    {/* Product savings */}
+                    {savedAmount > 0 && (
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography variant="body2" color="text.secondary">Product Savings</Typography>
+                        <Typography variant="body2" fontWeight={600} color="success.main">
+                          -₹{savedAmount}
+                        </Typography>
+                      </Box>
+                    )}
 
-              <Divider sx={{ my: 1.5 }} />
+                    {/* Coupon discount */}
+                    {coupon && discount > 0 && (
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <Typography variant="body2" color="text.secondary">Coupon</Typography>
+                          <Chip label={coupon.code} size="small" color="success" sx={{ fontSize: '0.7rem', height: 20 }} />
+                        </Box>
+                        <Typography variant="body2" fontWeight={600} color="success.main">
+                          -₹{discount}
+                        </Typography>
+                      </Box>
+                    )}
 
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                <Typography fontWeight={700}>Total</Typography>
-                <Typography fontWeight={700} fontSize="1.1rem">₹{total.toFixed(0)}</Typography>
-              </Box>
+                    {/* Delivery */}
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                      <Typography variant="body2" color="text.secondary">Delivery</Typography>
+                      {deliveryCharge === 0
+                        ? <Typography variant="body2" fontWeight={600} sx={{ color: ZAP_COLORS.accentGreen || '#06D6A0' }}>FREE</Typography>
+                        : <Typography variant="body2" fontWeight={500}>₹{deliveryCharge}</Typography>}
+                    </Box>
 
+                    <Divider sx={{ my: 1.5 }} />
+
+                    {/* Total */}
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                      <Typography fontWeight={700}>Total</Typography>
+                      <Typography fontWeight={700} fontSize="1.1rem">₹{total.toFixed(0)}</Typography>
+                    </Box>
+                  </>
+                );
+              })()}
               <Button fullWidth variant="contained" size="large" onClick={handleCheckout} disabled={loading}
                 sx={{ borderRadius: 3, py: 1.5, fontWeight: 700 }}>
                 {loading

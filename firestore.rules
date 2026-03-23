@@ -20,6 +20,17 @@ service cloud.firestore {
       return request.resource.data;
     }
 
+    // ✅ SECURITY FIX: Email verification check for order placement.
+    // Google/Facebook users are always verified by their provider.
+    // Only email/password accounts need to pass emailVerified == true.
+    // This prevents unverified bot-created accounts from placing orders
+    // even if they bypass the client-side check in Checkout.jsx.
+    function isEmailVerified() {
+      return request.auth.token.email_verified == true ||
+             request.auth.token.firebase.sign_in_provider != 'password';
+    }
+
+    // ── USERS ─────────────────────────────────────────────────────────────────
     match /users/{userId} {
       allow read:   if isOwner(userId) || isAdmin();
       allow create: if isAuthed() && request.auth.uid == userId;
@@ -27,49 +38,64 @@ service cloud.firestore {
       // SECURITY FIX: Users can update their own profile but NEVER the role field.
       // Previously any authenticated user could run updateDoc({role:'admin'}) on
       // their own document and instantly promote themselves. The diff check blocks that.
+      // ✅ SECURITY FIX: Max 5 addresses enforced at the database level too.
+      // Previously only enforced in AuthContext.jsx — direct Firestore API calls
+      // could bypass it and flood the database with unlimited addresses.
       allow update: if isAdmin() ||
         (isOwner(userId) &&
-         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']));
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) &&
+         request.resource.data.addresses.size() <= 5);
 
       allow delete: if isAdmin();
     }
 
+    // ── STORES ────────────────────────────────────────────────────────────────
     match /stores/{storeId} {
       allow read:  if true;
       allow write: if isAdmin();
     }
 
+    // ── CATEGORIES ────────────────────────────────────────────────────────────
     match /categories/{categoryId} {
       allow read:  if true;
       allow write: if isAdmin();
     }
 
+    // ── BANNERS ───────────────────────────────────────────────────────────────
     match /banners/{bannerId} {
       allow read:  if true;
       allow write: if isAdmin();
     }
 
+    // ── COUPONS ───────────────────────────────────────────────────────────────
     match /coupons/{couponId} {
       allow read:  if isAuthed();
       allow write: if isAdmin();
     }
 
+    // ── SETTINGS ──────────────────────────────────────────────────────────────
     match /settings/{settingId} {
       allow read:  if true;
       allow write: if isAdmin();
     }
 
+    // ── PRODUCTS ──────────────────────────────────────────────────────────────
     match /products/{productId} {
       allow read: if true;
       allow create, update, delete: if isAdmin();
     }
 
+    // ── ORDERS ────────────────────────────────────────────────────────────────
     match /orders/{orderId} {
       allow read: if isAuthed() &&
         (request.auth.uid == resource.data.userId || isAdmin());
 
-      // Basic sanity checks on order creation
+      // ✅ SECURITY FIX: Email verification now required at DB level.
+      // Unverified email/password accounts cannot place orders even if they
+      // bypass the client-side check in Checkout.jsx. Google/Facebook users
+      // are always verified by their OAuth provider so they are unaffected.
       allow create: if isAuthed() &&
+        isEmailVerified() &&
         request.auth.uid == incomingData().userId &&
         incomingData().storeId != null &&
         incomingData().total > 0 &&
@@ -90,14 +116,17 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ── PURCHASES ─────────────────────────────────────────────────────────────
     match /purchases/{purchaseId} {
       allow read, write: if isAdmin();
     }
 
+    // ── INVENTORY ─────────────────────────────────────────────────────────────
     match /inventory/{itemId} {
       allow read, write: if isAdmin();
     }
 
+    // ── FCM TOKENS ────────────────────────────────────────────────────────────
     // SECURITY FIX: Previously any authenticated user could write a token with
     // any userId, letting them hijack another user's push notifications.
     // Now create/update/delete all require userId == request.auth.uid.

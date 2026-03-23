@@ -84,12 +84,14 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const loginWithGoogle = async () => {
+    // Google OAuth always returns a verified account — no email check needed.
     const result = await signInWithPopup(auth, googleProvider);
     await createUserProfile(result.user);
     return result.user;
   };
 
   const loginWithFacebook = async () => {
+    // Facebook OAuth always returns a verified account — no email check needed.
     const result = await signInWithPopup(auth, facebookProvider);
     await createUserProfile(result.user);
     return result.user;
@@ -97,6 +99,23 @@ export const AuthProvider = ({ children }) => {
 
   const loginWithEmail = async (email, password) => {
     const result = await signInWithEmailAndPassword(auth, email, password);
+
+    // ✅ SECURITY FIX: Block unverified email/password accounts from logging in.
+    // After registration, users receive a verification email. Until they click
+    // the link, their account is locked out here — even if the password is correct.
+    // This prevents bots and throwaway accounts from accessing the app at all.
+    // Note: Google/Facebook users bypass this check entirely (they use signInWithPopup).
+    if (!result.user.emailVerified) {
+      // Sign them out immediately — don't let an unverified session persist.
+      await signOut(auth);
+      // Re-send the verification email in case they lost the original one.
+      await sendEmailVerification(result.user);
+      throw Object.assign(
+        new Error('Please verify your email before logging in. We just resent the verification link — check your inbox and spam folder.'),
+        { code: 'auth/email-not-verified' }
+      );
+    }
+
     await fetchUserProfile(result.user.uid);
     return result.user;
   };
@@ -106,9 +125,12 @@ export const AuthProvider = ({ children }) => {
     await updateProfile(result.user, { displayName });
     // ✅ BOT PROTECTION: Send verification email immediately after signup.
     // Even if a bot creates an account, it can't verify the email — so it
-    // can't place orders or access protected features. Totally free, no limits.
+    // can't log in, can't place orders, and can't access protected features.
+    // Totally free with no limits — uses Firebase Auth's built-in email sending.
     await sendEmailVerification(result.user);
     await createUserProfile(result.user, { displayName });
+    // Sign out immediately — user must verify email before they can use the app.
+    await signOut(auth);
     return result.user;
   };
 
