@@ -10,6 +10,7 @@ import {
   onAuthStateChanged,
   updateProfile,
   sendPasswordResetEmail,
+  sendEmailVerification,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, googleProvider, facebookProvider, COLLECTIONS } from '../firebase';
@@ -23,13 +24,13 @@ export const useAuth = () => {
 };
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
+  const [user, setUser]               = useState(null);
   const [userProfile, setUserProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [loading, setLoading]         = useState(true);
+  const [isAdmin, setIsAdmin]         = useState(false);
 
   const fetchUserProfile = async (uid) => {
-    const ref = doc(db, COLLECTIONS.USERS, uid);
+    const ref  = doc(db, COLLECTIONS.USERS, uid);
     const snap = await getDoc(ref);
     if (snap.exists()) {
       const data = snap.data();
@@ -41,21 +42,21 @@ export const AuthProvider = ({ children }) => {
   };
 
   const createUserProfile = async (firebaseUser, extra = {}) => {
-    const ref = doc(db, COLLECTIONS.USERS, firebaseUser.uid);
+    const ref  = doc(db, COLLECTIONS.USERS, firebaseUser.uid);
     const snap = await getDoc(ref);
     if (!snap.exists()) {
       const profile = {
-        uid: firebaseUser.uid,
-        email: firebaseUser.email,
+        uid:         firebaseUser.uid,
+        email:       firebaseUser.email,
         displayName: firebaseUser.displayName || extra.displayName || '',
-        photoURL: firebaseUser.photoURL || '',
-        phone: extra.phone || '',
-        addresses: [],
+        photoURL:    firebaseUser.photoURL || '',
+        phone:       extra.phone || '',
+        addresses:   [],
         // ✅ SECURITY FIX: Role is always 'user' on creation.
         // Admin role must be assigned manually via Firebase Console or a
         // one-time admin script. Never trust the client to self-assign admin.
         // To promote yourself: Firestore Console → users → {your uid} → role → 'admin'
-        role: 'user',
+        role:      'user',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
@@ -103,6 +104,10 @@ export const AuthProvider = ({ children }) => {
   const registerWithEmail = async (email, password, displayName) => {
     const result = await createUserWithEmailAndPassword(auth, email, password);
     await updateProfile(result.user, { displayName });
+    // ✅ BOT PROTECTION: Send verification email immediately after signup.
+    // Even if a bot creates an account, it can't verify the email — so it
+    // can't place orders or access protected features. Totally free, no limits.
+    await sendEmailVerification(result.user);
     await createUserProfile(result.user, { displayName });
     return result.user;
   };
@@ -123,7 +128,7 @@ export const AuthProvider = ({ children }) => {
     const addresses = userProfile.addresses || [];
     if (addresses.length >= 5) throw new Error('Maximum 5 addresses allowed');
     const newAddress = { id: Date.now().toString(), ...address };
-    const updated = [...addresses, newAddress];
+    const updated   = [...addresses, newAddress];
     await updateUserProfile({ addresses: updated });
     return newAddress;
   };
