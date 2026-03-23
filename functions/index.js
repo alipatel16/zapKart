@@ -4,9 +4,11 @@
 // ============================================================
 
 const { onDocumentCreated, onDocumentUpdated } = require('firebase-functions/v2/firestore');
-const { initializeApp }  = require('firebase-admin/app');
-const { getFirestore, FieldValue } = require('firebase-admin/firestore');
-const { getMessaging }   = require('firebase-admin/messaging');
+const { onCall, HttpsError }                   = require('firebase-functions/v2/https');
+const { initializeApp }                        = require('firebase-admin/app');
+const { getFirestore, FieldValue }             = require('firebase-admin/firestore');
+const { getMessaging }                         = require('firebase-admin/messaging');
+const crypto                                   = require('crypto'); // built-in Node module
 
 initializeApp();
 
@@ -46,15 +48,71 @@ const STATUS_COPY = {
 };
 
 // ============================================================
+// CALLABLE: Verify Razorpay payment signature server-side
+// ============================================================
+// ✅ SECURITY FIX: Previously the client stored the Razorpay signature but
+// never verified it — any user could forge paymentInfo and mark their order
+// as 'paid'. Now the client calls this function after the Razorpay checkout
+// completes. We HMAC-verify the signature with our secret key (never exposed
+// to the client) before updating paymentStatus to 'paid'.
+//
+// Setup:
+//   firebase functions:secrets:set RAZORPAY_KEY_SECRET
+//   (paste your Razorpay Key Secret when prompted)
+//
+// The client writes the order with paymentStatus:'pending', then calls this.
+exports.verifyRazorpayPayment = onCall(
+  { secrets: ['RAZORPAY_KEY_SECRET'] },
+  async (req) => {
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'You must be logged in to verify a payment.');
+    }
+
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderId } = req.data;
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !orderId) {
+      throw new HttpsError('invalid-argument', 'Missing required payment fields.');
+    }
+
+    // Verify the order belongs to the calling user before doing anything
+    const orderSnap = await db.collection('orders').doc(orderId).get();
+    if (!orderSnap.exists) {
+      throw new HttpsError('not-found', 'Order not found.');
+    }
+    if (orderSnap.data().userId !== req.auth.uid) {
+      throw new HttpsError('permission-denied', 'This order does not belong to you.');
+    }
+
+    // HMAC-SHA256 verification — Razorpay's documented approach
+    const secret = process.env.RAZORPAY_KEY_SECRET;
+    const body   = razorpay_order_id + '|' + razorpay_payment_id;
+    const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
+
+    if (expected !== razorpay_signature) {
+      console.error(`[Razorpay] Signature mismatch for order ${orderId}. Possible fraud.`);
+      throw new HttpsError('permission-denied', 'Payment signature verification failed.');
+    }
+
+    // Signature is valid — mark the order as paid
+    await db.collection('orders').doc(orderId).update({
+      paymentStatus: 'paid',
+      paymentInfo: {
+        razorpay_order_id,
+        razorpay_payment_id,
+        razorpay_signature,
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    console.log(`[Razorpay] Payment verified for order ${orderId}`);
+    return { success: true };
+  }
+);
+
+// ============================================================
 // TRIGGER 1: Validate order total & deduct stock on new order
 // ============================================================
 // Runs server-side so no client can manipulate prices or skip stock deduction.
-// - Re-fetches every product price from Firestore
-// - Re-validates the coupon if one was applied
-// - Recalculates subtotal, discount, delivery, and total
-// - If the submitted total is > ₹5 lower than the server total, corrects it
-//   and flags the order with totalAdjusted: true so admin can review
-// - Deducts stock for each ordered item atomically via batch write
 exports.validateAndProcessOrder = onDocumentCreated(
   'orders/{orderId}',
   async (event) => {
@@ -63,16 +121,30 @@ exports.validateAndProcessOrder = onDocumentCreated(
 
     if (!order || !Array.isArray(order.items) || order.items.length === 0) return;
 
+    // ✅ SECURITY FIX: Reject orders with unreasonable item quantities.
+    // A client could write quantity:99999 to drain all stock. We cancel
+    // the order before touching stock if any item looks suspicious.
+    for (const item of order.items) {
+      if (!item.id || typeof item.quantity !== 'number' || item.quantity < 1 || item.quantity > 100) {
+        console.warn(`[validateOrder] Order ${orderId} has invalid quantity for item ${item.id}. Cancelling.`);
+        await db.collection('orders').doc(orderId).update({
+          status:       'cancelled',
+          cancelReason: 'Invalid item quantity detected.',
+          updatedAt:    FieldValue.serverTimestamp(),
+        });
+        return;
+      }
+    }
+
     // ── 1. Fetch settings for delivery thresholds ───────────
-    // Falls back to sensible defaults if the settings doc doesn't exist.
     let DELIVERY_CHARGE     = 10;
     let FREE_DELIVERY_ABOVE = 299;
     try {
       const settingsSnap = await db.collection('settings').doc('app').get();
       if (settingsSnap.exists) {
         const s = settingsSnap.data();
-        if (s.deliveryCharge     != null) DELIVERY_CHARGE     = Number(s.deliveryCharge);
-        if (s.freeDeliveryAbove  != null) FREE_DELIVERY_ABOVE = Number(s.freeDeliveryAbove);
+        if (s.deliveryCharge    != null) DELIVERY_CHARGE     = Number(s.deliveryCharge);
+        if (s.freeDeliveryAbove != null) FREE_DELIVERY_ABOVE = Number(s.freeDeliveryAbove);
       }
     } catch (err) {
       console.warn('[validateOrder] Could not fetch settings, using defaults:', err.message);
@@ -104,6 +176,8 @@ exports.validateAndProcessOrder = onDocumentCreated(
 
     // ── 3. Validate coupon server-side ───────────────────────
     let serverDiscount = 0;
+    let couponDocId    = null;
+
     if (order.couponCode) {
       try {
         const couponSnap = await db.collection('coupons')
@@ -112,24 +186,30 @@ exports.validateAndProcessOrder = onDocumentCreated(
           .get();
 
         if (!couponSnap.empty) {
-          const coupon = couponSnap.docs[0].data();
+          const couponDoc  = couponSnap.docs[0];
+          const coupon     = couponDoc.data();
+          couponDocId      = couponDoc.id;
 
-          // Check expiry
-          const expired = coupon.expiresAt &&
+          const expired  = coupon.expiresAt &&
             (coupon.expiresAt.toDate ? coupon.expiresAt.toDate() : new Date(coupon.expiresAt)) < new Date();
-
-          // Check minimum order
           const belowMin = coupon.minOrder && serverSubtotal < coupon.minOrder;
 
-          if (!expired && !belowMin) {
+          // ✅ SECURITY FIX: Enforce per-user coupon usage limit.
+          // Previously a user could apply the same coupon to every order they placed.
+          const usedBy       = Array.isArray(coupon.usedBy) ? coupon.usedBy : [];
+          const alreadyUsed  = usedBy.includes(order.userId);
+
+          if (!expired && !belowMin && !alreadyUsed) {
             if (coupon.type === 'percent') {
               serverDiscount = Math.min(
                 (serverSubtotal * coupon.value) / 100,
-                coupon.maxDiscount != null ? coupon.maxDiscount : Infinity
+                coupon.maxDiscount != null ? coupon.maxDiscount : Infinity,
               );
             } else {
               serverDiscount = coupon.value || 0;
             }
+          } else {
+            if (alreadyUsed) console.warn(`[validateOrder] Coupon ${order.couponCode} already used by ${order.userId}`);
           }
         }
       } catch (err) {
@@ -145,23 +225,21 @@ exports.validateAndProcessOrder = onDocumentCreated(
 
     // ── 5. Build order update ────────────────────────────────
     const orderUpdate = {
-      serverVerified:      true,
-      serverSubtotal:      Math.round(serverSubtotal),
-      serverDiscount:      Math.round(serverDiscount),
+      serverVerified:       true,
+      serverSubtotal:       Math.round(serverSubtotal),
+      serverDiscount:       Math.round(serverDiscount),
       serverDeliveryCharge: serverDelivery,
       serverTotal,
       updatedAt: FieldValue.serverTimestamp(),
     };
 
-    // If the client submitted a suspiciously low total (> ₹5 difference),
-    // override with the server-calculated values and flag for admin review.
     if (discrepancy > 5) {
       console.warn(
         `[Order ${orderId}] Total tampered: submitted ₹${submittedTotal}, server ₹${serverTotal}. Correcting.`
       );
-      orderUpdate.total         = serverTotal;
-      orderUpdate.subtotal      = Math.round(serverSubtotal);
-      orderUpdate.discount      = Math.round(serverDiscount);
+      orderUpdate.total          = serverTotal;
+      orderUpdate.subtotal       = Math.round(serverSubtotal);
+      orderUpdate.discount       = Math.round(serverDiscount);
       orderUpdate.deliveryCharge = serverDelivery;
       orderUpdate.totalAdjusted  = true;
       orderUpdate.originalTotal  = submittedTotal;
@@ -169,7 +247,20 @@ exports.validateAndProcessOrder = onDocumentCreated(
 
     await db.collection('orders').doc(orderId).update(orderUpdate);
 
-    // ── 6. Deduct stock via batch write ──────────────────────
+    // ── 6. Mark coupon as used by this user ──────────────────
+    // Do this AFTER we've committed the order update so a crash here
+    // doesn't leave a paid order without the coupon discount recorded.
+    if (couponDocId && serverDiscount > 0) {
+      try {
+        await db.collection('coupons').doc(couponDocId).update({
+          usedBy: FieldValue.arrayUnion(order.userId),
+        });
+      } catch (err) {
+        console.warn('[validateOrder] Failed to record coupon usage:', err.message);
+      }
+    }
+
+    // ── 7. Deduct stock via batch write ──────────────────────
     if (stockItems.length > 0) {
       const batch = db.batch();
       for (const { ref, currentStock, deductQty } of stockItems) {
@@ -268,7 +359,6 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
     const before = event.data.before.data();
     const after  = event.data.after.data();
 
-    // Only fire when status actually changed
     if (!before || !after || before.status === after.status) return;
 
     const newStatus   = after.status;
@@ -277,10 +367,9 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
     const orderNumber = after.orderNumber || orderId.slice(-6).toUpperCase();
 
     // ── Restore stock when an order is cancelled ─────────────────────────────
-    // This covers both user-initiated cancels (via OrderHistory.jsx) and
-    // admin-initiated cancels (via AdminOrders.jsx). Client-side stock
-    // restoration has been removed from both; this Function is the single
-    // source of truth for stock restoration.
+    // Covers both user-initiated cancels and admin-initiated cancels.
+    // Client-side stock restoration has been removed from both; this Function
+    // is the single source of truth for stock restoration.
     if (newStatus === 'cancelled' && Array.isArray(after.items) && after.items.length > 0) {
       try {
         const batch = db.batch();
@@ -332,9 +421,6 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
         notification: {
           icon:     '/logo192.png',
           badge:    '/badge-72.png',
-          // ✅ Same tag for every update on the same order —
-          //    replaces the previous notification in the Android panel
-          //    (Swiggy / Zomato style live-updating delivery card).
           tag:      `order-tracking-${orderId}`,
           renotify: 'true',
           vibrate:  '[200,100,200]',

@@ -9,15 +9,14 @@ import {
   IconButton, Alert, Collapse,
 } from '@mui/material';
 import { Add, ArrowBack, CheckCircle, Phone, HeadsetMic, LocationOn, ErrorOutline } from '@mui/icons-material';
-// ✅ Removed: doc, getDoc, updateDoc — no longer doing client-side stock deduction.
-// Stock is now managed exclusively by the validateAndProcessOrder Cloud Function.
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db, COLLECTIONS } from '../../firebase';
-import { useAuth } from '../../context/AuthContext';
-import { useCart } from '../../context/CartContext';
-import { useStore } from '../../context/StoreContext';
-import { initiateRazorpayPayment } from '../../utils/helpers';
-import { ZAP_COLORS } from '../../theme';
+import { getFunctions, httpsCallable }          from 'firebase/functions';
+import { db, COLLECTIONS }                       from '../../firebase';
+import { useAuth }                               from '../../context/AuthContext';
+import { useCart }                               from '../../context/CartContext';
+import { useStore }                              from '../../context/StoreContext';
+import { initiateRazorpayPayment }               from '../../utils/helpers';
+import { ZAP_COLORS }                            from '../../theme';
 
 const SHAKE_STYLE = `
 @keyframes zapShake {
@@ -31,6 +30,12 @@ const SHAKE_STYLE = `
 }
 `;
 
+// ✅ SECURITY FIX: Safe order number — Math.random() avoids Date.now() collisions
+// (two orders placed in the same millisecond would get the same number).
+// This is display-only; Firestore's auto-ID is the true unique key.
+const generateOrderNumber = () =>
+  'ZAP' + Math.random().toString(36).slice(2, 8).toUpperCase();
+
 const Checkout = () => {
   const navigate = useNavigate();
   const { user, userProfile } = useAuth();
@@ -38,12 +43,12 @@ const Checkout = () => {
   const { items, coupon, subtotal, discount, deliveryCharge, total, clearCart } = useCart();
 
   const [selectedAddress, setSelectedAddress] = useState(userProfile?.addresses?.[0]?.id || '');
-  const [paymentMethod, setPaymentMethod] = useState('cod');
-  const [loading, setLoading] = useState(false);
-  const [orderPlaced, setOrderPlaced] = useState(null);
-  const [error, setError] = useState('');
-  const [addressShake, setAddressShake] = useState(false);
-  const [addressMissing, setAddressMissing] = useState(false);
+  const [paymentMethod, setPaymentMethod]     = useState('cod');
+  const [loading, setLoading]                 = useState(false);
+  const [orderPlaced, setOrderPlaced]         = useState(null);
+  const [error, setError]                     = useState('');
+  const [addressShake, setAddressShake]       = useState(false);
+  const [addressMissing, setAddressMissing]   = useState(false);
   const addressRef = useRef(null);
 
   const address = userProfile?.addresses?.find((a) => a.id === selectedAddress);
@@ -64,7 +69,13 @@ const Checkout = () => {
     setTimeout(() => setAddressShake(false), 700);
   };
 
-  const placeOrder = async (paymentInfo = null) => {
+  // ── Place order ────────────────────────────────────────────────────────────
+  // For COD:     writes order with paymentStatus:'pending' (paid on delivery).
+  // For Razorpay: writes order with paymentStatus:'pending', then calls
+  //               verifyRazorpayPayment Cloud Function which HMAC-verifies the
+  //               Razorpay signature server-side and upgrades to 'paid'.
+  //               The order is never marked 'paid' from the client directly.
+  const placeOrder = async (razorpayResponse = null) => {
     if (!address) {
       setError('Please select or add a delivery address to continue.');
       highlightAddressSection();
@@ -74,7 +85,7 @@ const Checkout = () => {
     setError('');
     setAddressMissing(false);
     try {
-      const orderNumber = 'ZAP' + Date.now().toString().slice(-8);
+      const orderNumber = generateOrderNumber();
       const orderData = {
         orderNumber,
         userId:        user.uid,
@@ -84,12 +95,12 @@ const Checkout = () => {
         customerEmail: user.email,
         customerPhone: address.phone || userProfile?.phone || '',
         items: items.map((i) => ({
-          id:             i.id,
-          name:           i.name,
-          quantity:       i.quantity,
-          mrp:            i.mrp,
+          id:              i.id,
+          name:            i.name,
+          quantity:        i.quantity,
+          mrp:             i.mrp,
           discountedPrice: i.discountedPrice || i.mrp,
-          images:         i.images || [],
+          images:          i.images || [],
         })),
         address,
         subtotal,
@@ -98,21 +109,45 @@ const Checkout = () => {
         deliveryCharge,
         total,
         paymentMethod,
-        paymentStatus: paymentInfo ? 'paid' : 'pending',
-        paymentInfo:   paymentInfo || null,
+        // ✅ Always write 'pending' — never trust the client to set 'paid'.
+        // COD stays 'pending' until admin marks it paid on delivery.
+        // Razorpay is upgraded to 'paid' by the verifyRazorpayPayment Cloud Function.
+        paymentStatus: 'pending',
+        paymentInfo:   null,
         status:        'placed',
         statusHistory: [{ status: 'placed', timestamp: new Date() }],
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+        createdAt:     serverTimestamp(),
+        updatedAt:     serverTimestamp(),
       };
 
       const ref = await addDoc(collection(db, COLLECTIONS.ORDERS), orderData);
 
-      // ✅ Stock deduction removed from client.
-      // The validateAndProcessOrder Cloud Function triggers automatically
-      // on order creation, re-validates the total server-side, and deducts
-      // stock via a server-side batch write. No client-side stock updates needed.
+      // ── Verify Razorpay signature server-side ──────────────────────────────
+      if (razorpayResponse) {
+        try {
+          const functions = getFunctions();
+          const verify    = httpsCallable(functions, 'verifyRazorpayPayment');
+          await verify({
+            razorpay_order_id:   razorpayResponse.razorpay_order_id,
+            razorpay_payment_id: razorpayResponse.razorpay_payment_id,
+            razorpay_signature:  razorpayResponse.razorpay_signature,
+            orderId:             ref.id,
+          });
+          // Cloud Function has now set paymentStatus:'paid' on the order document.
+        } catch (verifyErr) {
+          // Signature verification failed — order was created but payment is
+          // not confirmed. Show a specific error so the user can contact support.
+          console.error('[Razorpay] Verification failed:', verifyErr);
+          setError(
+            'Payment received but verification failed. Please contact support with your order number: ' +
+            orderNumber
+          );
+          setLoading(false);
+          return;
+        }
+      }
 
+      // Stock deduction happens server-side via validateAndProcessOrder trigger.
       clearCart();
       setOrderPlaced({ ...orderData, id: ref.id });
     } catch (err) {
@@ -131,13 +166,13 @@ const Checkout = () => {
     }
     if (paymentMethod === 'razorpay') {
       try {
-        const paymentInfo = await initiateRazorpayPayment({
+        const razorpayResponse = await initiateRazorpayPayment({
           amount: total,
           name:   userProfile?.displayName || user.displayName || '',
           email:  user.email,
           phone:  address.phone || userProfile?.phone || '',
         });
-        await placeOrder(paymentInfo);
+        await placeOrder(razorpayResponse);
       } catch (err) {
         if (err.message !== 'Payment cancelled') {
           setError(err.message || 'Payment failed. Please try again.');
@@ -148,6 +183,7 @@ const Checkout = () => {
     }
   };
 
+  // ── Order success screen ────────────────────────────────────────────────────
   if (orderPlaced) {
     return (
       <Container maxWidth="sm" sx={{ py: 6, textAlign: 'center' }}>
@@ -301,7 +337,10 @@ const Checkout = () => {
 
           {/* ── Order Summary ── */}
           <Box sx={{ width: { xs: '100%', md: 320 }, flexShrink: 0 }}>
-            <Paper elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3, p: 2.5, position: { md: 'sticky' }, top: { md: 80 } }}>
+            <Paper elevation={0} sx={{
+              border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3, p: 2.5,
+              position: { md: 'sticky' }, top: { md: 80 },
+            }}>
               <Typography variant="subtitle1" fontWeight={700} mb={2}>Order Summary</Typography>
 
               {items.map((item) => (
@@ -326,8 +365,7 @@ const Checkout = () => {
 
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                 <Typography variant="body2" color="text.secondary">Delivery</Typography>
-                <Typography variant="body2" fontWeight={500}
-                  color={deliveryCharge === 0 ? 'success.main' : 'text.primary'}>
+                <Typography variant="body2" fontWeight={500} color={deliveryCharge === 0 ? 'success.main' : 'text.primary'}>
                   {deliveryCharge === 0
                     ? <Typography component="span" sx={{ color: ZAP_COLORS.accentGreen || '#06D6A0', fontSize: '0.85rem', fontWeight: 600 }}>FREE</Typography>
                     : `₹${deliveryCharge}`}

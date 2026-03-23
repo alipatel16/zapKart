@@ -1,9 +1,5 @@
 rules_version = '2';
 
-// ================================================================
-// ZAP DELIVERY — FIRESTORE SECURITY RULES
-// ================================================================
-
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -27,7 +23,14 @@ service cloud.firestore {
     match /users/{userId} {
       allow read:   if isOwner(userId) || isAdmin();
       allow create: if isAuthed() && request.auth.uid == userId;
-      allow update: if isOwner(userId) || isAdmin();
+
+      // SECURITY FIX: Users can update their own profile but NEVER the role field.
+      // Previously any authenticated user could run updateDoc({role:'admin'}) on
+      // their own document and instantly promote themselves. The diff check blocks that.
+      allow update: if isAdmin() ||
+        (isOwner(userId) &&
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']));
+
       allow delete: if isAdmin();
     }
 
@@ -58,12 +61,6 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow read: if true;
-      // ✅ SECURITY FIX: Removed the stock-only update exception that allowed
-      // any logged-in user to directly modify product stock from the client.
-      // Stock is now managed exclusively by Firebase Cloud Functions:
-      //   • Order created  → validateAndProcessOrder deducts stock
-      //   • Order cancelled → notifyUserOnStatusChange restores stock
-      //   • Purchase added  → AdminPurchases.jsx (admin only via isAdmin check)
       allow create, update, delete: if isAdmin();
     }
 
@@ -71,17 +68,24 @@ service cloud.firestore {
       allow read: if isAuthed() &&
         (request.auth.uid == resource.data.userId || isAdmin());
 
+      // Basic sanity checks on order creation
       allow create: if isAuthed() &&
         request.auth.uid == incomingData().userId &&
-        incomingData().storeId != null;
+        incomingData().storeId != null &&
+        incomingData().total > 0 &&
+        incomingData().items.size() > 0 &&
+        incomingData().items.size() <= 20;
 
-      // Users can cancel their own order if still in placed/confirmed status.
-      // Admins can update any field.
+      // SECURITY FIX: Previously only checked status == 'cancelled' but did NOT
+      // restrict other fields — attacker could set total=1 in the same write.
+      // Now locked to only status, statusHistory, updatedAt fields.
       allow update: if isAdmin() ||
         (isAuthed() &&
          request.auth.uid == resource.data.userId &&
          (resource.data.status == 'placed' || resource.data.status == 'confirmed') &&
-         incomingData().status == 'cancelled');
+         incomingData().status == 'cancelled' &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['status', 'statusHistory', 'updatedAt']));
 
       allow delete: if isAdmin();
     }
@@ -94,10 +98,20 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // SECURITY FIX: Previously any authenticated user could write a token with
+    // any userId, letting them hijack another user's push notifications.
+    // Now create/update/delete all require userId == request.auth.uid.
     match /fcmTokens/{tokenId} {
-      allow read:           if isAdmin();
-      allow create, update: if isAuthed();
-      allow delete:         if isAuthed();
+      allow read: if isAdmin();
+
+      allow create: if isAuthed() &&
+        request.resource.data.userId == request.auth.uid;
+
+      allow update: if isAuthed() &&
+        resource.data.userId == request.auth.uid;
+
+      allow delete: if isAuthed() &&
+        resource.data.userId == request.auth.uid;
     }
   }
 }

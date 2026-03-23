@@ -144,17 +144,25 @@ const NotificationsInit = () => {
 };
 
 // ── Auth gate: shows BootScreen while Firebase resolves the session ───────────
-// This replaces the old `{!loading && children}` hack in AuthProvider,
-// keeping the component tree stable and the splash screen always visible.
 const AppShell = ({ children }) => {
   const { loading } = useAuth();
   if (loading) return <BootScreen />;
   return children;
 };
 
-// ── Initial app boot screen (shown ONLY while the very first JS chunk loads) ──
-// This is intentionally shown only on cold start. All subsequent navigations
-// use the null fallback below so there's no flash between pages.
+// ✅ SECURITY FIX: Admin route guard — enforced at the router level.
+// Previously the only protection was inside AdminLayout's React state (isAdmin),
+// which a determined user could bypass. This component blocks the route entirely
+// until Firebase has resolved the session AND confirmed role === 'admin'.
+// Non-admins are redirected to '/' before any admin JS chunk is rendered.
+const AdminRoute = ({ children }) => {
+  const { user, isAdmin, loading } = useAuth();
+  if (loading) return <BootScreen />;
+  if (!user || !isAdmin) return <Navigate to="/" replace />;
+  return children;
+};
+
+// ── Initial app boot screen ───────────────────────────────────────────────────
 const BootScreen = () => (
   <Box
     sx={{
@@ -209,8 +217,6 @@ const UserLayout = ({ children }) => (
         <Header />
       </Suspense>
       <Box component="main" sx={{ flex: 1 }}>
-        {/* PageTransition gives a smooth fade+slide-up on every route change,
-            eliminating the white-flash caused by lazy-loaded chunks. */}
         <PageTransition>{children}</PageTransition>
       </Box>
       <Suspense fallback={null}>
@@ -234,17 +240,7 @@ function App() {
             <CartProvider>
               <NotificationsInit />
               <Router>
-                {/*
-                  Outer Suspense: shows BootScreen only on the very first cold load
-                  while the initial JS bundle evaluates. Once the app shell is ready,
-                  this never triggers again for the lifetime of the session.
-                */}
                 <Suspense fallback={<BootScreen />}>
-                  {/*
-                    Inner Suspense (per route): fallback is null so navigating between
-                    pages never shows a loading screen. Chunks are prefetched in the
-                    background via webpackPrefetch so they're ready before the user clicks.
-                  */}
                   <AppShell>
                     <Routes>
                       {/* USER ROUTES */}
@@ -403,12 +399,14 @@ function App() {
                         }
                       />
 
-                      {/* ADMIN ROUTES */}
+                      {/* ADMIN ROUTES — all wrapped in AdminRoute guard */}
                       <Route
                         path="/admin"
                         element={
                           <Suspense fallback={null}>
-                            <AdminLayout />
+                            <AdminRoute>
+                              <AdminLayout />
+                            </AdminRoute>
                           </Suspense>
                         }
                       >
