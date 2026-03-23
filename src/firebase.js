@@ -7,7 +7,6 @@ import { getAuth, GoogleAuthProvider, FacebookAuthProvider }  from 'firebase/aut
 import { getStorage }                                         from 'firebase/storage';
 import { getAnalytics }                                       from 'firebase/analytics';
 import { getPerformance }                                     from 'firebase/performance';
-import { initializeAppCheck, ReCaptchaV3Provider }            from 'firebase/app-check';
 
 const firebaseConfig = {
   apiKey:            process.env.REACT_APP_FIREBASE_API_KEY,
@@ -20,48 +19,6 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-
-// ── App Check ─────────────────────────────────────────────────────────────────
-//
-// HOW IT WORKS:
-//   Every call your app makes to Firestore / Storage / Functions is accompanied
-//   by a short-lived App Check token. Firebase rejects requests without a valid
-//   token once enforcement is turned on in the console.
-//
-// DEVELOPMENT (localhost):
-//   Firebase reads window.FIREBASE_APPCHECK_DEBUG_TOKEN and accepts it as a
-//   valid token so you can develop normally without reCAPTCHA.
-//   → Set REACT_APP_APPCHECK_DEBUG_TOKEN in .env.local (gitignored).
-//   → Register that same token in Firebase Console → App Check → Apps → your app
-//     → Add debug token.
-//   → NEVER commit this token or put it in .env (only .env.local).
-//
-// PRODUCTION:
-//   Uses reCAPTCHA v3 which runs silently in the background.
-//   → Create a reCAPTCHA v3 site key at https://www.google.com/recaptcha/admin
-//     (choose "reCAPTCHA v3", add your production domain).
-//   → Set REACT_APP_RECAPTCHA_SITE_KEY in your hosting env vars (Render/Vercel/etc).
-//   → In Firebase Console → App Check → each service → click "Enforce".
-
-
-if (process.env.NODE_ENV !== 'production') {
-  // Must be set before initializeAppCheck is called.
-  // If the env var is missing, passing `true` tells Firebase to auto-generate
-  // a token and print it to the console so you can register it.
-  window.FIREBASE_APPCHECK_DEBUG_TOKEN =
-    process.env.REACT_APP_APPCHECK_DEBUG_TOKEN || true;
-}
-
-const recaptchaKey = process.env.REACT_APP_RECAPTCHA_SITE_KEY;
-
-if (!recaptchaKey) {
-  throw new Error("Missing REACT_APP_RECAPTCHA_SITE_KEY");
-}
-
-initializeAppCheck(app, {
-  provider: new ReCaptchaV3Provider(recaptchaKey),
-  isTokenAutoRefreshEnabled: true,
-});
 
 // ── Firebase services ─────────────────────────────────────────────────────────
 export const db          = getFirestore(app);
