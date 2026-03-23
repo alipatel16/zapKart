@@ -90,50 +90,48 @@ const AddressDetails = lazy(
 
 // ── Admin pages ───────────────────────────────────────────────────────────────
 const AdminLayout = lazy(
-  () => import(/* webpackPrefetch: true */ "./pages/admin/AdminLayout"),
+  () => import("./pages/admin/AdminLayout"),
 );
 const AdminDashboard = lazy(
-  () => import(/* webpackPrefetch: true */ "./pages/admin/AdminDashboard"),
+  () => import("./pages/admin/AdminDashboard"),
 );
 const AdminOrders = lazy(
-  () => import(/* webpackPrefetch: true */ "./pages/admin/AdminOrders"),
+  () => import("./pages/admin/AdminOrders"),
 );
 const AdminProducts = lazy(
-  () => import(/* webpackPrefetch: true */ "./pages/admin/AdminProducts"),
+  () => import("./pages/admin/AdminProducts"),
 );
 const AdminPurchases = lazy(
-  () => import(/* webpackPrefetch: true */ "./pages/admin/AdminPurchases"),
+  () => import("./pages/admin/AdminPurchases"),
 );
 const AdminStores = lazy(
-  () => import(/* webpackPrefetch: true */ "./pages/admin/AdminStores"),
+  () => import("./pages/admin/AdminStores"),
 );
 const AdminTopPicks = lazy(
-  () => import(/* webpackPrefetch: true */ "./pages/admin/AdminTopPicks"),
+  () => import("./pages/admin/AdminTopPicks"),
 );
 
 const AdminCategories = lazy(() =>
-  import(/* webpackPrefetch: true */ "./pages/admin/AdminOtherPages").then(
+  import("./pages/admin/AdminOtherPages").then(
     (m) => ({ default: m.AdminCategories }),
   ),
 );
 const AdminInventory = lazy(() =>
-  import(/* webpackPrefetch: true */ "./pages/admin/AdminOtherPages").then(
+  import("./pages/admin/AdminOtherPages").then(
     (m) => ({ default: m.AdminInventory }),
   ),
 );
 const AdminSalesReport = lazy(() =>
-  import(/* webpackPrefetch: true */ "./pages/admin/AdminOtherPages").then(
+  import("./pages/admin/AdminOtherPages").then(
     (m) => ({ default: m.AdminSalesReport }),
   ),
 );
 const AdminBanners = lazy(() =>
-  import(
-    /* webpackPrefetch: true */ "./pages/admin/AdminBannersAndCoupons"
-  ).then((m) => ({ default: m.AdminBanners })),
+  import("./pages/admin/AdminBannersAndCoupons").then((m) => ({ default: m.AdminBanners })),
 );
 const AdminCoupons = lazy(() =>
   import(
-    /* webpackPrefetch: true */ "./pages/admin/AdminBannersAndCoupons"
+    "./pages/admin/AdminBannersAndCoupons"
   ).then((m) => ({ default: m.AdminCoupons })),
 );
 
