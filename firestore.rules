@@ -1,5 +1,9 @@
 rules_version = '2';
 
+// ================================================================
+// ZAP DELIVERY — FIRESTORE SECURITY RULES
+// ================================================================
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -54,13 +58,13 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow read: if true;
-      allow create, delete: if isAdmin();
-      allow update: if isAdmin() ||
-        (
-          isAuthed() &&
-          request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['stock', 'updatedAt'])
-        );
+      // ✅ SECURITY FIX: Removed the stock-only update exception that allowed
+      // any logged-in user to directly modify product stock from the client.
+      // Stock is now managed exclusively by Firebase Cloud Functions:
+      //   • Order created  → validateAndProcessOrder deducts stock
+      //   • Order cancelled → notifyUserOnStatusChange restores stock
+      //   • Purchase added  → AdminPurchases.jsx (admin only via isAdmin check)
+      allow create, update, delete: if isAdmin();
     }
 
     match /orders/{orderId} {
@@ -71,6 +75,8 @@ service cloud.firestore {
         request.auth.uid == incomingData().userId &&
         incomingData().storeId != null;
 
+      // Users can cancel their own order if still in placed/confirmed status.
+      // Admins can update any field.
       allow update: if isAdmin() ||
         (isAuthed() &&
          request.auth.uid == resource.data.userId &&
@@ -89,9 +95,9 @@ service cloud.firestore {
     }
 
     match /fcmTokens/{tokenId} {
-      allow read:          if isAdmin();
+      allow read:           if isAdmin();
       allow create, update: if isAuthed();
-      allow delete:        if isAuthed();
+      allow delete:         if isAuthed();
     }
   }
 }

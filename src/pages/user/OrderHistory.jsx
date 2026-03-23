@@ -1,3 +1,6 @@
+// ============================================================
+// src/pages/user/OrderHistory.jsx
+// ============================================================
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -9,7 +12,7 @@ import {
 import { ExpandMore, Download, Refresh, ArrowBack, Phone, HeadsetMic, Cancel } from '@mui/icons-material';
 import {
   collection, query, where, orderBy, getDocs, limit, startAfter, getCountFromServer,
-  doc, updateDoc, getDoc, serverTimestamp,
+  doc, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
 import { useAuth } from '../../context/AuthContext';
@@ -18,15 +21,16 @@ import { ZAP_COLORS } from '../../theme';
 
 const PAGE_SIZE = 10;
 
+// ── Order status stepper ─────────────────────────────────────────────────────
 const OrderStatusStepper = ({ status }) => {
-  const activeStep = ORDER_STATUSES.findIndex((s) => s.key === status);
+  const activeStep  = ORDER_STATUSES.findIndex((s) => s.key === status);
   const isCancelled = status === 'cancelled';
   return (
     <Box sx={{ mt: 1.5, overflowX: 'auto' }}>
       <Stepper activeStep={activeStep} alternativeLabel sx={{
         minWidth: 400,
-        '& .MuiStepLabel-label': { fontSize: '0.65rem', mt: 0.5 },
-        '& .MuiStepIcon-root.Mui-active': { color: ZAP_COLORS.primary },
+        '& .MuiStepLabel-label':          { fontSize: '0.65rem', mt: 0.5 },
+        '& .MuiStepIcon-root.Mui-active':    { color: ZAP_COLORS.primary },
         '& .MuiStepIcon-root.Mui-completed': { color: ZAP_COLORS.accentGreen },
       }}>
         {ORDER_STATUSES.map((s) => (
@@ -48,11 +52,12 @@ const OrderStatusStepper = ({ status }) => {
   );
 };
 
+// ── Individual order card ────────────────────────────────────────────────────
 const OrderCard = ({ order, userProfile, expanded, onChange, onCancelled }) => {
-  const [downloading, setDownloading] = useState(false);
+  const [downloading,  setDownloading]  = useState(false);
   const [cancelDialog, setCancelDialog] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
-  const [cancelError, setCancelError] = useState('');
+  const [cancelling,   setCancelling]   = useState(false);
+  const [cancelError,  setCancelError]  = useState('');
 
   const canCancel = ['placed', 'confirmed'].includes(order.status);
 
@@ -69,21 +74,11 @@ const OrderCard = ({ order, userProfile, expanded, onChange, onCancelled }) => {
         updatedAt: serverTimestamp(),
       });
 
-      // ── Restore stock for each cancelled item ──────────────────────────
-      for (const item of order.items || []) {
-        try {
-          const productSnap = await getDoc(doc(db, COLLECTIONS.PRODUCTS, item.id));
-          if (productSnap.exists()) {
-            const currentStock = productSnap.data().stock || 0;
-            await updateDoc(doc(db, COLLECTIONS.PRODUCTS, item.id), {
-              stock: currentStock + item.quantity,
-              updatedAt: serverTimestamp(),
-            });
-          }
-        } catch (stockErr) {
-          console.warn(`Stock restore failed for ${item.id}:`, stockErr.message);
-        }
-      }
+      // ✅ Stock restoration removed from client.
+      // The notifyUserOnStatusChange Cloud Function detects the status change
+      // to 'cancelled' and restores stock server-side automatically.
+      // This also avoids a permission error since regular users can no longer
+      // write to the products collection directly.
 
       setCancelDialog(false);
       onCancelled?.();
@@ -105,20 +100,28 @@ const OrderCard = ({ order, userProfile, expanded, onChange, onCancelled }) => {
   const statusColor = getOrderStatusColor(order.status);
 
   return (
-    <Accordion elevation={0} expanded={expanded} onChange={onChange} sx={{
-      border: `1px solid ${ZAP_COLORS.border}`, borderRadius: '12px !important', mb: 1.5,
-      '&:before': { display: 'none' },
-      '&.Mui-expanded': { boxShadow: `0 4px 16px ${ZAP_COLORS.primary}12` },
-      ...(expanded && { boxShadow: `0 0 0 2px ${ZAP_COLORS.primary}` }),
-    }}>
+    <Accordion
+      elevation={0}
+      expanded={expanded}
+      onChange={onChange}
+      sx={{
+        border: `1px solid ${ZAP_COLORS.border}`, borderRadius: '12px !important', mb: 1.5,
+        '&:before': { display: 'none' },
+        '&.Mui-expanded': { boxShadow: `0 4px 16px ${ZAP_COLORS.primary}12` },
+        ...(expanded && { boxShadow: `0 0 0 2px ${ZAP_COLORS.primary}` }),
+      }}
+    >
       <AccordionSummary expandIcon={<ExpandMore />} sx={{ px: 2, py: 1 }}>
         <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
           <Box>
             <Typography variant="body2" fontWeight={700}>#{order.orderNumber}</Typography>
             <Typography variant="caption" color="text.secondary">{formatDate(order.createdAt)}</Typography>
           </Box>
-          <Chip label={ORDER_STATUSES.find((s) => s.key === order.status)?.label || order.status} size="small"
-            sx={{ background: `${statusColor}18`, color: statusColor, border: `1px solid ${statusColor}30`, fontWeight: 600, fontSize: '0.7rem' }} />
+          <Chip
+            label={ORDER_STATUSES.find((s) => s.key === order.status)?.label || order.status}
+            size="small"
+            sx={{ background: `${statusColor}18`, color: statusColor, border: `1px solid ${statusColor}30`, fontWeight: 600, fontSize: '0.7rem' }}
+          />
           <Box sx={{ ml: 'auto', mr: 1 }}>
             <Typography fontWeight={700} color="primary">₹{order.total}</Typography>
             <Typography variant="caption" color="text.secondary">{order.items?.length} items</Typography>
@@ -130,23 +133,33 @@ const OrderCard = ({ order, userProfile, expanded, onChange, onCancelled }) => {
         <Divider sx={{ mb: 2 }} />
         {order.status !== 'cancelled' && <OrderStatusStepper status={order.status} />}
 
+        {/* Items */}
         <Box sx={{ mt: 2 }}>
-          <Typography variant="caption" fontWeight={600} color="text.secondary" mb={1} display="block">ITEMS ORDERED</Typography>
+          <Typography variant="caption" fontWeight={600} color="text.secondary" mb={1} display="block">
+            ITEMS ORDERED
+          </Typography>
           {order.items?.map((item, i) => (
             <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
-              <Box component="img"
+              <Box
+                component="img"
                 src={item.images?.[0] || `https://via.placeholder.com/50x50/FFF8F5/FF6B35?text=${item.name?.slice(0, 2)}`}
-                alt={item.name} sx={{ width: 44, height: 44, borderRadius: 1.5, objectFit: 'cover', flexShrink: 0 }}
+                alt={item.name}
+                sx={{ width: 44, height: 44, borderRadius: 1.5, objectFit: 'cover', flexShrink: 0 }}
               />
               <Box sx={{ flex: 1 }}>
                 <Typography variant="body2" fontWeight={600}>{item.name}</Typography>
-                <Typography variant="caption" color="text.secondary">₹{item.discountedPrice || item.mrp} × {item.quantity}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  ₹{item.discountedPrice || item.mrp} × {item.quantity}
+                </Typography>
               </Box>
-              <Typography variant="body2" fontWeight={700}>₹{(item.discountedPrice || item.mrp) * item.quantity}</Typography>
+              <Typography variant="body2" fontWeight={700}>
+                ₹{(item.discountedPrice || item.mrp) * item.quantity}
+              </Typography>
             </Box>
           ))}
         </Box>
 
+        {/* Price breakdown */}
         <Box sx={{ mt: 1.5, p: 1.5, background: `${ZAP_COLORS.primary}06`, borderRadius: 2 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
             <Typography variant="caption" color="text.secondary">Subtotal</Typography>
@@ -160,7 +173,9 @@ const OrderCard = ({ order, userProfile, expanded, onChange, onCancelled }) => {
           )}
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
             <Typography variant="caption" color="text.secondary">Delivery</Typography>
-            <Typography variant="caption">{order.deliveryCharge === 0 ? 'FREE' : `₹${order.deliveryCharge}`}</Typography>
+            <Typography variant="caption">
+              {order.deliveryCharge === 0 ? 'FREE' : `₹${order.deliveryCharge}`}
+            </Typography>
           </Box>
           <Divider sx={{ my: 0.5 }} />
           <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -169,9 +184,12 @@ const OrderCard = ({ order, userProfile, expanded, onChange, onCancelled }) => {
           </Box>
         </Box>
 
+        {/* Address */}
         {order.address && (
           <Box sx={{ mt: 1.5 }}>
-            <Typography variant="caption" fontWeight={600} color="text.secondary" display="block" mb={0.5}>DELIVERY ADDRESS</Typography>
+            <Typography variant="caption" fontWeight={600} color="text.secondary" display="block" mb={0.5}>
+              DELIVERY ADDRESS
+            </Typography>
             <Typography variant="caption" color="text.secondary">
               {order.address.name} — {order.address.phone}<br />
               {order.address.line1}{order.address.line2 ? `, ${order.address.line2}` : ''}, {order.address.city}
@@ -180,9 +198,13 @@ const OrderCard = ({ order, userProfile, expanded, onChange, onCancelled }) => {
           </Box>
         )}
 
+        {/* Actions */}
         <Box sx={{ display: 'flex', gap: 1, mt: 2, flexWrap: 'wrap' }}>
-          <Button size="small" variant="outlined" startIcon={downloading ? <CircularProgress size={14} /> : <Download />}
-            onClick={handleDownloadInvoice} disabled={downloading} sx={{ borderRadius: 2 }}>Invoice</Button>
+          <Button size="small" variant="outlined"
+            startIcon={downloading ? <CircularProgress size={14} /> : <Download />}
+            onClick={handleDownloadInvoice} disabled={downloading} sx={{ borderRadius: 2 }}>
+            Invoice
+          </Button>
           {canCancel && (
             <Button size="small" variant="outlined" color="error" startIcon={<Cancel />}
               onClick={(e) => { e.stopPropagation(); setCancelDialog(true); }} sx={{ borderRadius: 2 }}>
@@ -190,14 +212,20 @@ const OrderCard = ({ order, userProfile, expanded, onChange, onCancelled }) => {
             </Button>
           )}
           <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
-            <Button size="small" variant="text" component="a" href="tel:+919876543210" startIcon={<Phone />}
-              sx={{ borderRadius: 2, color: ZAP_COLORS.primary, fontSize: '0.75rem' }}>Call</Button>
+            <Button size="small" variant="text" component="a" href="tel:+919876543210"
+              startIcon={<Phone />} sx={{ borderRadius: 2, color: ZAP_COLORS.primary, fontSize: '0.75rem' }}>
+              Call
+            </Button>
             <Button size="small" variant="text" component="a" href="https://wa.me/919876543210" target="_blank"
-              sx={{ borderRadius: 2, color: '#25D366', fontSize: '0.75rem' }}>WhatsApp</Button>
+              sx={{ borderRadius: 2, color: '#25D366', fontSize: '0.75rem' }}>
+              WhatsApp
+            </Button>
           </Box>
         </Box>
 
-        <Dialog open={cancelDialog} onClose={() => !cancelling && setCancelDialog(false)} maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+        {/* Cancel dialog */}
+        <Dialog open={cancelDialog} onClose={() => !cancelling && setCancelDialog(false)}
+          maxWidth="xs" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
           <DialogTitle fontWeight={700} sx={{ fontFamily: "'Syne', sans-serif" }}>Cancel Order?</DialogTitle>
           <DialogContent>
             {cancelError && <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>{cancelError}</Alert>}
@@ -211,7 +239,9 @@ const OrderCard = ({ order, userProfile, expanded, onChange, onCancelled }) => {
             )}
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
-            <Button onClick={() => setCancelDialog(false)} disabled={cancelling} variant="outlined" fullWidth>Keep Order</Button>
+            <Button onClick={() => setCancelDialog(false)} disabled={cancelling} variant="outlined" fullWidth>
+              Keep Order
+            </Button>
             <Button onClick={handleCancel} disabled={cancelling} color="error" variant="contained" fullWidth>
               {cancelling ? <CircularProgress size={18} sx={{ color: '#fff' }} /> : 'Yes, Cancel'}
             </Button>
@@ -222,17 +252,19 @@ const OrderCard = ({ order, userProfile, expanded, onChange, onCancelled }) => {
   );
 };
 
+// ── Main page ────────────────────────────────────────────────────────────────
 const OrderHistory = () => {
   const { user, userProfile } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const highlightId = searchParams.get('highlight');
-  const [expandedId, setExpandedId] = useState(highlightId || false);
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
-  const [cursors, setCursors] = useState([null]);
+
+  const [expandedId,   setExpandedId]   = useState(highlightId || false);
+  const [orders,       setOrders]       = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [page,         setPage]         = useState(0);
+  const [totalPages,   setTotalPages]   = useState(0);
+  const [cursors,      setCursors]      = useState([null]);
   const [statusFilter, setStatusFilter] = useState('all');
 
   const fetchOrders = async (pageIndex = 0, filter = 'all') => {
@@ -256,22 +288,31 @@ const OrderHistory = () => {
       setOrders(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setPage(pageIndex);
       if (snap.docs.length > 0) {
-        setCursors((prev) => { const updated = [...prev]; updated[pageIndex + 1] = snap.docs[snap.docs.length - 1]; return updated; });
+        setCursors((prev) => {
+          const updated = [...prev];
+          updated[pageIndex + 1] = snap.docs[snap.docs.length - 1];
+          return updated;
+        });
       }
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { setCursors([null]); fetchOrders(0, statusFilter); }, [user?.uid, statusFilter]);
+  useEffect(() => {
+    setCursors([null]);
+    fetchOrders(0, statusFilter);
+  }, [user?.uid, statusFilter]);
 
   const STATUS_TABS = [
-    { value: 'all', label: 'All' },
-    { value: 'placed', label: '🆕 Placed' },
-    { value: 'confirmed', label: '✅ Confirmed' },
+    { value: 'all',        label: 'All' },
+    { value: 'placed',     label: '🆕 Placed' },
+    { value: 'confirmed',  label: '✅ Confirmed' },
     { value: 'processing', label: '⚙️ Processing' },
-    { value: 'packed', label: '📦 Packed' },
-    { value: 'enroute', label: '🛵 En Route' },
-    { value: 'delivered', label: '✅ Delivered' },
-    { value: 'cancelled', label: '❌ Cancelled' },
+    { value: 'packed',     label: '📦 Packed' },
+    { value: 'enroute',    label: '🛵 En Route' },
+    { value: 'delivered',  label: '✅ Delivered' },
+    { value: 'cancelled',  label: '❌ Cancelled' },
   ];
 
   return (
@@ -280,17 +321,25 @@ const OrderHistory = () => {
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, px: { xs: 1, sm: 0 } }}>
           <IconButton onClick={() => navigate(-1)} size="small"><ArrowBack /></IconButton>
           <Typography variant="h6" fontWeight={700}>My Orders</Typography>
-          <IconButton size="small" onClick={() => fetchOrders(0, statusFilter)} sx={{ ml: 'auto' }}><Refresh fontSize="small" /></IconButton>
+          <IconButton size="small" onClick={() => fetchOrders(0, statusFilter)} sx={{ ml: 'auto' }}>
+            <Refresh fontSize="small" />
+          </IconButton>
         </Box>
 
-        <Tabs value={statusFilter} onChange={(_, v) => setStatusFilter(v)}
-          variant="scrollable" scrollButtons="auto"
-          sx={{ mb: 2, '& .MuiTab-root': { fontSize: '0.75rem', minWidth: 'auto', px: 1.5 } }}>
+        <Tabs
+          value={statusFilter}
+          onChange={(_, v) => setStatusFilter(v)}
+          variant="scrollable"
+          scrollButtons="auto"
+          sx={{ mb: 2, '& .MuiTab-root': { fontSize: '0.75rem', minWidth: 'auto', px: 1.5 } }}
+        >
           {STATUS_TABS.map((t) => <Tab key={t.value} value={t.value} label={t.label} />)}
         </Tabs>
 
         {loading ? (
-          Array(3).fill(0).map((_, i) => <Skeleton key={i} variant="rectangular" height={80} sx={{ borderRadius: 2, mb: 1.5 }} />)
+          Array(3).fill(0).map((_, i) => (
+            <Skeleton key={i} variant="rectangular" height={80} sx={{ borderRadius: 2, mb: 1.5 }} />
+          ))
         ) : orders.length === 0 ? (
           <Box sx={{ textAlign: 'center', py: 8 }}>
             <Box sx={{ fontSize: '4rem', mb: 2 }}>📦</Box>
@@ -302,26 +351,45 @@ const OrderHistory = () => {
           <>
             {orders.map((order) => (
               <Box key={order.id} id={`order-${order.id}`}>
-                <OrderCard order={order} userProfile={userProfile}
+                <OrderCard
+                  order={order}
+                  userProfile={userProfile}
                   expanded={expandedId === order.id}
                   onChange={(_, isOpen) => setExpandedId(isOpen ? order.id : false)}
-                  onCancelled={() => fetchOrders(0, statusFilter)} />
+                  onCancelled={() => fetchOrders(0, statusFilter)}
+                />
               </Box>
             ))}
 
-            <Box sx={{ mt: 2, p: 2, borderRadius: 2.5, background: `${ZAP_COLORS.primary}08`, border: `1px solid ${ZAP_COLORS.primary}20`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
+            <Box sx={{ mt: 2, p: 2, borderRadius: 2.5, background: `${ZAP_COLORS.primary}08`,
+              border: `1px solid ${ZAP_COLORS.primary}20`, display: 'flex', alignItems: 'center',
+              justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
               <Typography variant="body2" fontWeight={600}>Need help with an order?</Typography>
               <Box sx={{ display: 'flex', gap: 1 }}>
-                <Button size="small" variant="outlined" component="a" href="tel:+919876543210" startIcon={<Phone />} sx={{ borderRadius: 10, fontSize: '0.75rem' }}>Call Us</Button>
-                <Button size="small" variant="outlined" startIcon={<HeadsetMic />} onClick={() => navigate('/help')} sx={{ borderRadius: 10, fontSize: '0.75rem' }}>Help Center</Button>
+                <Button size="small" variant="outlined" component="a" href="tel:+919876543210"
+                  startIcon={<Phone />} sx={{ borderRadius: 10, fontSize: '0.75rem' }}>
+                  Call Us
+                </Button>
+                <Button size="small" variant="outlined" startIcon={<HeadsetMic />}
+                  onClick={() => navigate('/help')} sx={{ borderRadius: 10, fontSize: '0.75rem' }}>
+                  Help Center
+                </Button>
               </Box>
             </Box>
 
             {totalPages > 1 && (
               <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1, mt: 3 }}>
-                <Button size="small" variant="outlined" disabled={page === 0} onClick={() => fetchOrders(page - 1, statusFilter)}>Previous</Button>
-                <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', px: 1 }}>Page {page + 1} of {totalPages}</Typography>
-                <Button size="small" variant="outlined" disabled={page >= totalPages - 1} onClick={() => fetchOrders(page + 1, statusFilter)}>Next</Button>
+                <Button size="small" variant="outlined" disabled={page === 0}
+                  onClick={() => fetchOrders(page - 1, statusFilter)}>
+                  Previous
+                </Button>
+                <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', px: 1 }}>
+                  Page {page + 1} of {totalPages}
+                </Typography>
+                <Button size="small" variant="outlined" disabled={page >= totalPages - 1}
+                  onClick={() => fetchOrders(page + 1, statusFilter)}>
+                  Next
+                </Button>
               </Box>
             )}
           </>

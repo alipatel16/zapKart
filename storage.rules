@@ -6,14 +6,14 @@ rules_version = '2';
 // Storage folder ownership model:
 //
 //   /banners/**       GLOBAL — app-wide carousel ads
-//                     Anyone can read. Authenticated admins can write.
+//                     Anyone can read. Only admins can write.
 //
 //   /categories/**    GLOBAL — shared category icons/thumbnails
-//                     Anyone can read. Authenticated admins can write.
+//                     Anyone can read. Only admins can write.
 //
 //   /products/**      STORE-SCOPED — product images vary per store
 //                     Anyone can read (product catalogue is public).
-//                     Authenticated admins can write.
+//                     Only admins can write.
 //
 //   /users/{uid}/**   USER-SCOPED — profile photos
 //                     Anyone can read (for display in UI).
@@ -34,6 +34,14 @@ service firebase.storage {
       return isAuthed() && request.auth.uid == userId;
     }
 
+    // ✅ SECURITY FIX: Check Firestore for admin role.
+    // Previously isAuthed() was used here, meaning ANY logged-in user
+    // could upload to product/banner/category paths.
+    function isAdmin() {
+      return isAuthed() &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
     // Image validation: must be an image and under 5 MB
     function isValidImage() {
       return request.resource.contentType.matches('image/.*')
@@ -41,34 +49,24 @@ service firebase.storage {
     }
 
     // ── BANNERS (GLOBAL) ─────────────────────────────────────
-    // Marketing / carousel images are NOT store-specific.
-    // Any authenticated admin can upload; public read.
     match /banners/{filename} {
       allow read:  if true;
-      allow write: if isAuthed() && isValidImage();
+      allow write: if isAdmin() && isValidImage();
     }
 
     // ── CATEGORIES (GLOBAL) ──────────────────────────────────
-    // Category icons / thumbnails are shared across all stores.
-    // Any authenticated admin can upload; public read.
     match /categories/{filename} {
       allow read:  if true;
-      allow write: if isAuthed() && isValidImage();
+      allow write: if isAdmin() && isValidImage();
     }
 
     // ── PRODUCTS (STORE-SCOPED) ───────────────────────────────
-    // Product images differ per store (different packaging, etc.)
-    // Stored flat under /products/ — the storeId is recorded in
-    // Firestore, not encoded in the filename.
-    // Public read (catalogue browsing); admin write.
     match /products/{filename} {
       allow read:  if true;
-      allow write: if isAuthed() && isValidImage();
+      allow write: if isAdmin() && isValidImage();
     }
 
     // ── USER PROFILE PHOTOS (USER-SCOPED) ────────────────────
-    // Each user has their own folder. Only they can upload;
-    // public read so the avatar is visible in the UI.
     match /users/{userId}/{filename} {
       allow read:  if true;
       allow write: if isOwner(userId) && isValidImage();

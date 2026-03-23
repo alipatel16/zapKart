@@ -1,3 +1,6 @@
+// ============================================================
+// src/context/AuthContext.jsx
+// ============================================================
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
   signInWithPopup,
@@ -48,13 +51,17 @@ export const AuthProvider = ({ children }) => {
         photoURL: firebaseUser.photoURL || '',
         phone: extra.phone || '',
         addresses: [],
-        role: firebaseUser.email === process.env.REACT_APP_ADMIN_EMAIL ? 'admin' : 'user',
+        // ✅ SECURITY FIX: Role is always 'user' on creation.
+        // Admin role must be assigned manually via Firebase Console or a
+        // one-time admin script. Never trust the client to self-assign admin.
+        // To promote yourself: Firestore Console → users → {your uid} → role → 'admin'
+        role: 'user',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
       await setDoc(ref, profile);
       setUserProfile(profile);
-      setIsAdmin(profile.role === 'admin');
+      setIsAdmin(false);
       return profile;
     }
     await updateDoc(ref, { updatedAt: serverTimestamp(), lastLogin: serverTimestamp() });
