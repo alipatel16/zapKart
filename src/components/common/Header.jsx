@@ -25,8 +25,6 @@ const HideOnScroll = ({ children }) => {
   const [forceShow, setForceShow] = React.useState(false);
 
   React.useLayoutEffect(() => {
-    // On every route change: immediately force the header visible
-    // and reset scroll BEFORE the browser paints the new page.
     window.scrollTo(0, 0);
     setForceShow(true);
     const id = requestAnimationFrame(() => setForceShow(false));
@@ -57,8 +55,6 @@ const SearchOverlay = ({ onClose }) => {
     setLoading(true);
     try {
       const col = collection(db, COLLECTIONS.PRODUCTS);
-      // Keep constraints minimal to avoid composite index requirements.
-      // storeId filter applied client-side so only active + limit needed.
       const constraints = [where('active', '==', true), limit(150)];
       const snap = await getDocs(query(col, ...constraints));
       const lower = term.toLowerCase();
@@ -66,7 +62,6 @@ const SearchOverlay = ({ onClose }) => {
       const docs = snap.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .filter((p) => {
-          // Store filter applied client-side
           if (storeId && p.storeId !== storeId) return false;
           return (
             p.name?.toLowerCase().includes(lower) ||
@@ -74,7 +69,6 @@ const SearchOverlay = ({ onClose }) => {
             p.unit?.toLowerCase().includes(lower)
           );
         })
-        // Sort: name starts-with first, then contains
         .sort((a, b) => {
           const aStarts = a.name?.toLowerCase().startsWith(lower) ? 0 : 1;
           const bStarts = b.name?.toLowerCase().startsWith(lower) ? 0 : 1;
@@ -109,7 +103,6 @@ const SearchOverlay = ({ onClose }) => {
     if (e.key === 'Escape') onClose();
   };
 
-  // Highlight matching characters
   const highlight = (text, term) => {
     if (!term || !text) return text;
     const idx = text.toLowerCase().indexOf(term.toLowerCase());
@@ -136,7 +129,6 @@ const SearchOverlay = ({ onClose }) => {
       }}
     >
       <Box sx={{ width: '100%', maxWidth: 560 }}>
-        {/* Search input */}
         <Paper elevation={8} sx={{ borderRadius: 3, overflow: 'hidden' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', px: 2, py: 1.5 }}>
             {loading
@@ -159,7 +151,6 @@ const SearchOverlay = ({ onClose }) => {
             )}
           </Box>
 
-          {/* Suggestions */}
           {suggestions.length > 0 && (
             <Box sx={{ borderTop: `1px solid ${ZAP_COLORS.border}` }}>
               {suggestions.map((product, i) => (
@@ -174,7 +165,6 @@ const SearchOverlay = ({ onClose }) => {
                     transition: 'background 0.12s',
                   }}
                 >
-                  {/* Thumbnail */}
                   <Box
                     component="img"
                     src={product.images?.[0] || `https://via.placeholder.com/40x40/FFF8F5/FF6B35?text=${product.name?.[0]}`}
@@ -195,7 +185,6 @@ const SearchOverlay = ({ onClose }) => {
                 </Box>
               ))}
 
-              {/* See all results */}
               <Box
                 onClick={handleSearch}
                 sx={{
@@ -211,7 +200,6 @@ const SearchOverlay = ({ onClose }) => {
             </Box>
           )}
 
-          {/* No results state */}
           {query_.length >= 2 && !loading && suggestions.length === 0 && (
             <Box sx={{ px: 2, py: 1.5, borderTop: `1px solid ${ZAP_COLORS.border}`, textAlign: 'center' }}>
               <Typography variant="body2" color="text.secondary">
@@ -249,7 +237,14 @@ const Header = () => {
     { label: 'My Orders',  icon: <History />,  path: '/orders' },
   ];
 
- const locationText = activeUserStore?.name || userLocation?.label || 'Set Location';
+  const locationText = activeUserStore?.name || userLocation?.label || 'Set Location';
+
+  // ── Drawer nav handler — no setTimeout needed since UserLayout now uses
+  //    <Outlet> and this Header never remounts during navigation ──────────
+  const handleDrawerNav = (path) => {
+    setDrawerOpen(false);
+    navigate(path);
+  };
 
   return (
     <>
@@ -360,7 +355,7 @@ const Header = () => {
 
         <List sx={{ px: 1 }}>
           {navItems.map((item) => (
-            <ListItemButton key={item.path} onClick={() => { setDrawerOpen(false); setTimeout(() => {navigate(item.path);}) }} sx={{ borderRadius: 2, mb: 0.5, background: location.pathname === item.path ? `${ZAP_COLORS.primary}20` : 'transparent', color: location.pathname === item.path ? ZAP_COLORS.primary : 'rgba(255,255,255,0.8)', '&:hover': { background: `${ZAP_COLORS.primary}15` } }}>
+            <ListItemButton key={item.path} onClick={() => handleDrawerNav(item.path)} sx={{ borderRadius: 2, mb: 0.5, background: location.pathname === item.path ? `${ZAP_COLORS.primary}20` : 'transparent', color: location.pathname === item.path ? ZAP_COLORS.primary : 'rgba(255,255,255,0.8)', '&:hover': { background: `${ZAP_COLORS.primary}15` } }}>
               <ListItemIcon sx={{ color: 'inherit', minWidth: 40 }}>{item.icon}</ListItemIcon>
               <ListItemText primary={item.label} primaryTypographyProps={{ fontWeight: 500, fontSize: '0.9rem' }} />
             </ListItemButton>
@@ -374,7 +369,7 @@ const Header = () => {
             { label: 'Privacy Policy', path: '/privacy' },
             { label: 'Terms & Conditions', path: '/terms' },
           ].map((item) => (
-            <ListItemButton key={item.path} onClick={() => { setDrawerOpen(false); setTimeout(() => {navigate(item.path);}) }} sx={{ borderRadius: 2, mb: 0.3, color: 'rgba(255,255,255,0.55)', '&:hover': { background: `${ZAP_COLORS.primary}15`, color: '#fff' } }}>
+            <ListItemButton key={item.path} onClick={() => handleDrawerNav(item.path)} sx={{ borderRadius: 2, mb: 0.3, color: 'rgba(255,255,255,0.55)', '&:hover': { background: `${ZAP_COLORS.primary}15`, color: '#fff' } }}>
               <ListItemText primary={item.label} primaryTypographyProps={{ fontSize: '0.82rem' }} />
             </ListItemButton>
           ))}
