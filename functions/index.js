@@ -5,6 +5,7 @@
 
 const { onDocumentCreated, onDocumentUpdated } = require('firebase-functions/v2/firestore');
 const { onCall, HttpsError }                   = require('firebase-functions/v2/https');
+const { onSchedule }                           = require('firebase-functions/v2/scheduler'); // ← FCM cleanup scheduler
 const { initializeApp }                        = require('firebase-admin/app');
 const { getFirestore, FieldValue }             = require('firebase-admin/firestore');
 const { getMessaging }                         = require('firebase-admin/messaging');
@@ -84,8 +85,8 @@ exports.verifyRazorpayPayment = onCall(
     }
 
     // HMAC-SHA256 verification — Razorpay's documented approach
-    const secret = process.env.RAZORPAY_KEY_SECRET;
-    const body   = razorpay_order_id + '|' + razorpay_payment_id;
+    const secret   = process.env.RAZORPAY_KEY_SECRET;
+    const body     = razorpay_order_id + '|' + razorpay_payment_id;
     const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
 
     if (expected !== razorpay_signature) {
@@ -133,6 +134,42 @@ exports.validateAndProcessOrder = onDocumentCreated(
           updatedAt:    FieldValue.serverTimestamp(),
         });
         return;
+      }
+    }
+
+    // ✅ COD ABUSE FIX: Cancel if user already has 2+ active unpaid COD orders.
+    // Prevents someone spamming COD orders with no intention of paying.
+    // The client-side check in Checkout.jsx gives a friendly message; this is
+    // the server-side safety net that can't be bypassed via the API.
+    if (order.paymentMethod === 'cod') {
+      try {
+        const activeCodSnap = await db.collection('orders')
+          .where('userId',        '==', order.userId)
+          .where('paymentMethod', '==', 'cod')
+          .where('paymentStatus', '==', 'pending')
+          .get();
+
+        // The current order has ALREADY been written to Firestore, so it shows
+        // up in the query above — subtract 1 to get the pre-existing count.
+        const activeCount = activeCodSnap.docs.filter((d) => {
+          const s = d.data().status;
+          return s !== 'cancelled' && s !== 'delivered';
+        }).length - 1;
+
+        if (activeCount >= 2) {
+          console.warn(
+            `[COD Limit] User ${order.userId} has ${activeCount} active COD orders. Cancelling ${orderId}.`,
+          );
+          await db.collection('orders').doc(orderId).update({
+            status:       'cancelled',
+            cancelReason: 'Maximum 2 unpaid COD orders allowed at a time. Please complete or cancel existing orders.',
+            updatedAt:    FieldValue.serverTimestamp(),
+          });
+          return;
+        }
+      } catch (err) {
+        console.warn('[COD Limit] Could not check active COD orders:', err.message);
+        // Non-fatal — continue processing the order.
       }
     }
 
@@ -186,18 +223,17 @@ exports.validateAndProcessOrder = onDocumentCreated(
           .get();
 
         if (!couponSnap.empty) {
-          const couponDoc  = couponSnap.docs[0];
-          const coupon     = couponDoc.data();
-          couponDocId      = couponDoc.id;
+          const couponDoc = couponSnap.docs[0];
+          const coupon    = couponDoc.data();
+          couponDocId     = couponDoc.id;
 
           const expired  = coupon.expiresAt &&
             (coupon.expiresAt.toDate ? coupon.expiresAt.toDate() : new Date(coupon.expiresAt)) < new Date();
           const belowMin = coupon.minOrder && serverSubtotal < coupon.minOrder;
 
           // ✅ SECURITY FIX: Enforce per-user coupon usage limit.
-          // Previously a user could apply the same coupon to every order they placed.
-          const usedBy       = Array.isArray(coupon.usedBy) ? coupon.usedBy : [];
-          const alreadyUsed  = usedBy.includes(order.userId);
+          const usedBy      = Array.isArray(coupon.usedBy) ? coupon.usedBy : [];
+          const alreadyUsed = usedBy.includes(order.userId);
 
           if (!expired && !belowMin && !alreadyUsed) {
             if (coupon.type === 'percent') {
@@ -209,7 +245,9 @@ exports.validateAndProcessOrder = onDocumentCreated(
               serverDiscount = coupon.value || 0;
             }
           } else {
-            if (alreadyUsed) console.warn(`[validateOrder] Coupon ${order.couponCode} already used by ${order.userId}`);
+            if (alreadyUsed) {
+              console.warn(`[validateOrder] Coupon ${order.couponCode} already used by ${order.userId}`);
+            }
           }
         }
       } catch (err) {
@@ -235,7 +273,7 @@ exports.validateAndProcessOrder = onDocumentCreated(
 
     if (discrepancy > 5) {
       console.warn(
-        `[Order ${orderId}] Total tampered: submitted ₹${submittedTotal}, server ₹${serverTotal}. Correcting.`
+        `[Order ${orderId}] Total tampered: submitted ₹${submittedTotal}, server ₹${serverTotal}. Correcting.`,
       );
       orderUpdate.total          = serverTotal;
       orderUpdate.subtotal       = Math.round(serverSubtotal);
@@ -367,9 +405,9 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
     const orderNumber = after.orderNumber || orderId.slice(-6).toUpperCase();
     const prevStatus  = before.status;
     const items       = after.items;
- 
+
     if (Array.isArray(items) && items.length > 0) {
- 
+
       // ── Case 1 & 3: restock on cancel ──────────────────────────────────────
       if (newStatus === 'cancelled' && prevStatus !== 'cancelled') {
         try {
@@ -390,7 +428,7 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
           console.error(`[Stock] Restock failed for order ${orderId}:`, err.message);
         }
       }
- 
+
       // ── Case 2: deduct on cancelled → delivered (admin override) ───────────
       // The order was previously cancelled (stock already restored at that time).
       // Admin is now marking it as delivered, so consume the stock again.
@@ -413,7 +451,7 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
           console.error(`[Stock] Deduct failed for order ${orderId}:`, err.message);
         }
       }
- 
+
     }
 
     // ── Send FCM notification to user ────────────────────────────────────────
@@ -479,3 +517,34 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
     }
   }
 );
+
+// ============================================================
+// SCHEDULED: Clean up FCM tokens older than 60 days
+// ============================================================
+// ✅ FCM CLEANUP FIX: Tokens are saved whenever a user logs in / browser
+// refreshes. Over time, old/uninstalled devices accumulate dead tokens that
+// waste quota on every multicast send. This job runs every Sunday at 2am
+// and deletes tokens that haven't been refreshed in 60 days.
+//
+// Firebase free tier allows 3 scheduled Cloud Functions — this counts as one.
+// It processes up to 500 tokens per run (safe batch limit for Firestore).
+exports.cleanupStaleFcmTokens = onSchedule('every sunday 02:00', async () => {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 60); // 60 days ago
+
+  const snap = await db.collection('fcmTokens')
+    .where('updatedAt', '<', cutoff)
+    .limit(500) // safety cap — re-runs next Sunday if there are more
+    .get();
+
+  if (snap.empty) {
+    console.log('[FCM Cleanup] No stale tokens found.');
+    return;
+  }
+
+  const batch = db.batch();
+  snap.docs.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+
+  console.log(`[FCM Cleanup] Deleted ${snap.docs.length} stale FCM tokens (older than 60 days).`);
+});

@@ -17,11 +17,11 @@ const Auth = () => {
   const from      = location.state?.from?.pathname || '/';
   const { loginWithGoogle, loginWithFacebook, loginWithEmail, registerWithEmail, resetPassword } = useAuth();
 
-  const [tab, setTab]             = useState(0); // 0=login, 1=register
-  const [showPwd, setShowPwd]     = useState(false);
-  const [loading, setLoading]     = useState('');
-  const [error, setError]         = useState('');
-  const [success, setSuccess]     = useState('');
+  const [tab, setTab]               = useState(0); // 0=login, 1=register
+  const [showPwd, setShowPwd]       = useState(false);
+  const [loading, setLoading]       = useState('');
+  const [error, setError]           = useState('');
+  const [success, setSuccess]       = useState('');
   const [forgotMode, setForgotMode] = useState(false);
   // ✅ BOT PROTECTION: Show this screen after successful registration
   // instead of navigating away — user must verify email before using the app.
@@ -101,16 +101,19 @@ const Auth = () => {
         setVerifyEmailScreen(true);
       }
     } catch (err) {
+      // ✅ RATE LIMIT FIX: auth/too-many-requests carries the human-readable
+      // "Try again in X minutes" message directly — use it as-is.
       const msgs = {
-        'auth/user-not-found':        'No account found with this email',
-        'auth/wrong-password':        'Incorrect password',
-        'auth/email-already-in-use':  'Email already registered. Please login.',
-        'auth/weak-password':         'Password must be at least 6 characters',
-        'auth/invalid-email':         'Invalid email address',
-        'auth/invalid-credential':    'Incorrect email or password',
-        'auth/email-not-verified':    'Please verify your email first. Check your inbox and spam folder.',
+        'auth/user-not-found':       'No account found with this email',
+        'auth/wrong-password':       'Incorrect password',
+        'auth/email-already-in-use': 'Email already registered. Please login.',
+        'auth/weak-password':        'Password must be at least 6 characters',
+        'auth/invalid-email':        'Invalid email address',
+        'auth/invalid-credential':   'Incorrect email or password',
+        'auth/email-not-verified':   'Please verify your email first. Check your inbox and spam folder.',
+        'auth/too-many-requests':    err.message, // ← contains "Try again in X minutes"
       };
-      setError(msgs[err.code] || err.message || 'Authentication failed');
+      setError(msgs[err.code] ?? err.message ?? 'Authentication failed');
     } finally {
       setLoading('');
     }

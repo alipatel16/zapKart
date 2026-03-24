@@ -12,7 +12,10 @@ import {
   sendPasswordResetEmail,
   sendEmailVerification,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  doc, getDoc, setDoc, updateDoc, serverTimestamp,
+  deleteDoc,                                          // ← added for rate-limit cleanup
+} from 'firebase/firestore';
 import { auth, db, googleProvider, facebookProvider, COLLECTIONS } from '../firebase';
 
 const AuthContext = createContext(null);
@@ -22,6 +25,79 @@ export const useAuth = () => {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 };
+
+// ── Login rate-limit constants ────────────────────────────────────────────────
+const MAX_ATTEMPTS  = 3;          // failed attempts before block
+const BLOCK_MINUTES = 10;         // how long the block lasts
+
+// ── Rate-limit helpers (stored in Firestore loginAttempts/{emailKey}) ─────────
+
+/**
+ * Derive a Firestore-safe document key from an email address.
+ * Lowercases and replaces non-alphanumeric characters with underscores.
+ */
+const emailKey = (email) => email.toLowerCase().replace(/[^a-z0-9]/g, '_');
+
+/**
+ * Check whether the email is currently blocked.
+ * Throws auth/too-many-requests with the minutes-remaining if so.
+ * Silently clears an expired block document.
+ */
+const checkLoginRateLimit = async (email) => {
+  const ref  = doc(db, 'loginAttempts', emailKey(email));
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+
+  const data = snap.data();
+  const now  = Date.now();
+
+  if (data.blockedUntil && data.blockedUntil.toMillis() > now) {
+    const minsLeft = Math.ceil((data.blockedUntil.toMillis() - now) / 60_000);
+    throw Object.assign(
+      new Error(
+        `Too many failed attempts. Try again in ${minsLeft} minute${minsLeft > 1 ? 's' : ''}.`,
+      ),
+      { code: 'auth/too-many-requests' },
+    );
+  }
+
+  // Block has expired — clean up so the slate is fresh
+  if (data.blockedUntil && data.blockedUntil.toMillis() <= now) {
+    await deleteDoc(ref).catch(() => {});
+  }
+};
+
+/**
+ * Increment the failed-attempt counter for this email.
+ * On the MAX_ATTEMPTS-th failure the document gets a blockedUntil timestamp.
+ */
+const recordFailedAttempt = async (email) => {
+  const ref  = doc(db, 'loginAttempts', emailKey(email));
+  const snap = await getDoc(ref);
+
+  const attempts = (snap.exists() ? snap.data().attempts || 0 : 0) + 1;
+
+  if (attempts >= MAX_ATTEMPTS) {
+    const blockedUntil = new Date(Date.now() + BLOCK_MINUTES * 60_000);
+    await setDoc(ref, { attempts, blockedUntil, updatedAt: serverTimestamp() });
+  } else {
+    await setDoc(
+      ref,
+      { attempts, blockedUntil: null, updatedAt: serverTimestamp() },
+      { merge: true },
+    );
+  }
+};
+
+/**
+ * Remove the attempt record on successful login so a legitimate user
+ * starts fresh next time.
+ */
+const clearLoginAttempts = async (email) => {
+  await deleteDoc(doc(db, 'loginAttempts', emailKey(email))).catch(() => {});
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser]               = useState(null);
@@ -97,25 +173,46 @@ export const AuthProvider = ({ children }) => {
     return result.user;
   };
 
+  // ── Updated loginWithEmail — now with rate limiting ───────────────────────
   const loginWithEmail = async (email, password) => {
-    const result = await signInWithEmailAndPassword(auth, email, password);
+    // ✅ RATE LIMIT FIX: Check BEFORE calling Firebase so blocked users never
+    // even hit Firebase Auth — this prevents brute-force attacks on accounts
+    // while staying entirely within Firebase's free tier (no reCAPTCHA needed).
+    await checkLoginRateLimit(email);
+
+    let result;
+    try {
+      result = await signInWithEmailAndPassword(auth, email, password);
+    } catch (err) {
+      // Only count credential errors as failed attempts — not network issues,
+      // quota errors, etc. that are outside the user's control.
+      if (
+        err.code === 'auth/wrong-password'     ||
+        err.code === 'auth/user-not-found'     ||
+        err.code === 'auth/invalid-credential'
+      ) {
+        await recordFailedAttempt(email);
+      }
+      throw err;
+    }
 
     // ✅ SECURITY FIX: Block unverified email/password accounts from logging in.
     // After registration, users receive a verification email. Until they click
     // the link, their account is locked out here — even if the password is correct.
-    // This prevents bots and throwaway accounts from accessing the app at all.
     // Note: Google/Facebook users bypass this check entirely (they use signInWithPopup).
     if (!result.user.emailVerified) {
-      // Sign them out immediately — don't let an unverified session persist.
       await signOut(auth);
-      // Re-send the verification email in case they lost the original one.
       await sendEmailVerification(result.user);
       throw Object.assign(
-        new Error('Please verify your email before logging in. We just resent the verification link — check your inbox and spam folder.'),
-        { code: 'auth/email-not-verified' }
+        new Error(
+          'Please verify your email before logging in. We just resent the verification link — check your inbox and spam folder.',
+        ),
+        { code: 'auth/email-not-verified' },
       );
     }
 
+    // Login success — clear any stored attempt counter
+    await clearLoginAttempts(email);
     await fetchUserProfile(result.user.uid);
     return result.user;
   };
@@ -158,7 +255,7 @@ export const AuthProvider = ({ children }) => {
   const updateAddress = async (addressId, data) => {
     if (!user || !userProfile) return;
     const updated = (userProfile.addresses || []).map((a) =>
-      a.id === addressId ? { ...a, ...data } : a
+      a.id === addressId ? { ...a, ...data } : a,
     );
     await updateUserProfile({ addresses: updated });
   };

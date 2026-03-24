@@ -11,9 +11,24 @@ export const useCart = () => {
   return ctx;
 };
 
-const CART_KEY = 'zap_cart';
-const DELIVERY_CHARGE = parseInt(process.env.REACT_APP_DELIVERY_CHARGE) || 10;
+const CART_KEY           = 'zap_cart';
+const DELIVERY_CHARGE    = parseInt(process.env.REACT_APP_DELIVERY_CHARGE)    || 10;
 const FREE_DELIVERY_ABOVE = parseInt(process.env.REACT_APP_FREE_DELIVERY_ABOVE) || 299;
+
+// ✅ CART QUANTITY LIMIT: A user can add at most MAX_QTY_PER_ITEM units of any
+// single product. If the product has less stock than this cap, the stock value
+// wins. This prevents cart abuse and mirrors the order-level quantity check in
+// the Cloud Function (which rejects any item with quantity > 100).
+const MAX_QTY_PER_ITEM = 10;
+
+/**
+ * Compute the effective upper-bound quantity for a product.
+ * stock value of 0/null/undefined ⟶ treated as "no stock info" ⟶ use MAX_QTY_PER_ITEM.
+ */
+const effectiveMax = (product) => {
+  const stock = typeof product.stock === 'number' ? product.stock : Infinity;
+  return Math.min(MAX_QTY_PER_ITEM, stock > 0 ? stock : MAX_QTY_PER_ITEM);
+};
 
 export const CartProvider = ({ children }) => {
   const [items, setItems] = useState(() => {
@@ -30,52 +45,77 @@ export const CartProvider = ({ children }) => {
     localStorage.setItem(CART_KEY, JSON.stringify(items));
   }, [items]);
 
+  // ── addToCart ─────────────────────────────────────────────────────────────
+  // Adds `qty` units of `product` to the cart, but never exceeds effectiveMax.
+  // Returns an object so callers can show a friendly message when capped.
+  //   { added: number, capped: boolean, max: number }
   const addToCart = useCallback((product, qty = 1) => {
+    let result = { added: qty, capped: false, max: effectiveMax(product) };
+
     setItems((prev) => {
+      const max      = effectiveMax(product);
       const existing = prev.find((i) => i.id === product.id);
+      const current  = existing ? existing.quantity : 0;
+      const allowed  = Math.max(0, max - current);   // how many more we can add
+      const toAdd    = Math.min(qty, allowed);
+
+      result = { added: toAdd, capped: toAdd < qty, max };
+
+      if (toAdd === 0) return prev; // already at max — no-op
+
       if (existing) {
         return prev.map((i) =>
-          i.id === product.id ? { ...i, quantity: i.quantity + qty } : i
+          i.id === product.id ? { ...i, quantity: current + toAdd } : i,
         );
       }
-      return [...prev, { ...product, quantity: qty }];
+      return [...prev, { ...product, quantity: toAdd }];
     });
+
+    return result;
   }, []);
 
+  // ── removeFromCart ────────────────────────────────────────────────────────
   const removeFromCart = useCallback((productId) => {
     setItems((prev) => prev.filter((i) => i.id !== productId));
   }, []);
 
+  // ── updateQuantity ────────────────────────────────────────────────────────
+  // Clamps the new quantity to [1, effectiveMax].  Passing qty < 1 removes.
   const updateQuantity = useCallback((productId, qty) => {
     if (qty < 1) {
       removeFromCart(productId);
       return;
     }
     setItems((prev) =>
-      prev.map((i) => (i.id === productId ? { ...i, quantity: qty } : i))
+      prev.map((i) => {
+        if (i.id !== productId) return i;
+        const max     = effectiveMax(i);
+        const clamped = Math.min(qty, max);
+        return { ...i, quantity: clamped };
+      }),
     );
   }, [removeFromCart]);
 
+  // ── clearCart ─────────────────────────────────────────────────────────────
   const clearCart = useCallback(() => {
     setItems([]);
     setCoupon(null);
     localStorage.removeItem(CART_KEY);
   }, []);
 
-  const isInCart = useCallback((productId) => items.some((i) => i.id === productId), [items]);
-
+  // ── helpers ───────────────────────────────────────────────────────────────
+  const isInCart   = useCallback((productId) => items.some((i) => i.id === productId), [items]);
   const getQuantity = useCallback((productId) => {
     const item = items.find((i) => i.id === productId);
     return item ? item.quantity : 0;
   }, [items]);
 
-  // ── Replaces the entire items array (used by store reconciliation) ─────────
-  // Cart.jsx calls this after querying the new store's products and resolving
-  // which items exist there and which don't.
+  // ── Replaces the entire items array (used by store reconciliation) ────────
   const replaceItems = useCallback((newItems) => {
     setItems(newItems);
   }, []);
 
+  // ── Totals ────────────────────────────────────────────────────────────────
   // mrpTotal: sum of full MRP prices (before any product discounts)
   // Unavailable items are excluded from all totals
   const mrpTotal = items
@@ -97,8 +137,8 @@ export const CartProvider = ({ children }) => {
     : 0;
 
   const deliveryCharge = subtotal >= FREE_DELIVERY_ABOVE ? 0 : DELIVERY_CHARGE;
-  const total = subtotal - discount + deliveryCharge;
-  const totalItems = items
+  const total          = subtotal - discount + deliveryCharge;
+  const totalItems     = items
     .filter((i) => !i._unavailable)
     .reduce((sum, item) => sum + item.quantity, 0);
   const savings = items
@@ -118,7 +158,7 @@ export const CartProvider = ({ children }) => {
     removeFromCart,
     updateQuantity,
     clearCart,
-    replaceItems,   // ← new
+    replaceItems,
     isInCart,
     getQuantity,
     mrpTotal,
@@ -130,6 +170,7 @@ export const CartProvider = ({ children }) => {
     savings,
     FREE_DELIVERY_ABOVE,
     DELIVERY_CHARGE,
+    MAX_QTY_PER_ITEM,   // ← exposed so UI can show the limit to users
   };
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

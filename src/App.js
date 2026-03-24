@@ -20,11 +20,10 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { useNotifications } from "./hooks/useNotifications";
 import PageTransition from "./components/common/PageTransition";
 import CartReconciler from "./components/user/CartReconciler";
+import ScrollToTop from './components/common/ScrollToTop';
 
 // ── Common ───────────────────────────────────────────────────────────────────
-const Header = lazy(
-  () => import(/* webpackPrefetch: true */ "./components/common/Header"),
-);
+import Header from "./components/common/Header";
 const BottomNav = lazy(
   () => import(/* webpackPrefetch: true */ "./components/common/BottomNav"),
 );
@@ -212,9 +211,7 @@ const BootScreen = () => (
 const UserLayout = ({ children }) => (
   <LocationGate>
     <Box sx={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-      <Suspense fallback={null}>
-        <Header />
-      </Suspense>
+      <Header />
       <Box component="main" sx={{ flex: 1 }}>
         <PageTransition>{children}</PageTransition>
       </Box>
@@ -240,6 +237,7 @@ function App() {
               <CartReconciler />   
               <NotificationsInit />
               <Router>
+                <ScrollToTop />
                 <Suspense fallback={<BootScreen />}>
                   <AppShell>
                     <Routes>

@@ -20,8 +20,24 @@ import { ZAP_COLORS } from '../../theme';
 import LocationPickerDialog from '../user/LocationPickerDialog';
 
 const HideOnScroll = ({ children }) => {
+  const location = useLocation();
   const trigger = useScrollTrigger({ threshold: 10 });
-  return <Slide appear={false} direction="down" in={!trigger}>{children}</Slide>;
+  const [forceShow, setForceShow] = React.useState(false);
+
+  React.useLayoutEffect(() => {
+    // On every route change: immediately force the header visible
+    // and reset scroll BEFORE the browser paints the new page.
+    window.scrollTo(0, 0);
+    setForceShow(true);
+    const id = requestAnimationFrame(() => setForceShow(false));
+    return () => cancelAnimationFrame(id);
+  }, [location.key]);
+
+  return (
+    <Slide appear={false} direction="down" in={forceShow || !trigger}>
+      {children}
+    </Slide>
+  );
 };
 
 // ── Smart search suggestion dropdown ────────────────────────────────────────
