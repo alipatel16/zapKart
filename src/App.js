@@ -19,6 +19,7 @@ import ActiveOrdersBar from "./components/user/ActiveOrdersBar";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { useNotifications } from "./hooks/useNotifications";
 import PageTransition from "./components/common/PageTransition";
+import CartReconciler from "./components/user/CartReconciler";
 
 // ── Common ───────────────────────────────────────────────────────────────────
 const Header = lazy(
@@ -236,6 +237,7 @@ function App() {
         <AuthProvider>
           <StoreProvider>
             <CartProvider>
+              <CartReconciler />   
               <NotificationsInit />
               <Router>
                 <Suspense fallback={<BootScreen />}>

@@ -1,20 +1,21 @@
 // ============================================================
 // src/pages/user/Checkout.jsx
 // ============================================================
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box, Container, Typography, Button, Paper, Radio, RadioGroup,
-  FormControlLabel, CircularProgress, Divider, Chip,
-  IconButton, Alert, Collapse,
+  FormControlLabel, CircularProgress, Divider, Chip, IconButton, Alert,
 } from '@mui/material';
-import { Add, ArrowBack, CheckCircle, Phone, HeadsetMic, LocationOn, ErrorOutline } from '@mui/icons-material';
+import {
+  Add, ArrowBack, CheckCircle, Phone, HeadsetMic, LocationOn,
+} from '@mui/icons-material';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, httpsCallable }          from 'firebase/functions';
 import { db, COLLECTIONS }                       from '../../firebase';
 import { useAuth }                               from '../../context/AuthContext';
 import { useCart }                               from '../../context/CartContext';
-import { useStore }                              from '../../context/StoreContext';
+import { useStore, getDistanceKm }               from '../../context/StoreContext';
 import { initiateRazorpayPayment }               from '../../utils/helpers';
 import { ZAP_COLORS }                            from '../../theme';
 
@@ -30,30 +31,70 @@ const SHAKE_STYLE = `
 }
 `;
 
-// ✅ SECURITY FIX: Safe order number — Math.random() avoids Date.now() collisions
-// (two orders placed in the same millisecond would get the same number).
-// This is display-only; Firestore's auto-ID is the true unique key.
 const generateOrderNumber = () =>
   'ZAP' + Math.random().toString(36).slice(2, 8).toUpperCase();
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Returns true if a saved address falls within the active store's service area.
+// Addresses without lat/lng are treated as "unverified" — shown with a badge
+// but still selectable (we can't validate them).
+// ─────────────────────────────────────────────────────────────────────────────
+const isAddressServiceable = (addr, store, SERVICE_RADIUS_KM) => {
+  if (!store) return true;                  // no store context yet — don't filter
+  if (!addr.lat || !addr.lng) return true;  // no coords — can't validate, keep it
+  const radius = store.deliveryRadiusKm || SERVICE_RADIUS_KM;
+  const dist   = getDistanceKm(
+    parseFloat(addr.lat), parseFloat(addr.lng),
+    store.lat, store.lng,
+  );
+  return dist <= radius;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 const Checkout = () => {
   const navigate = useNavigate();
   const { user, userProfile } = useAuth();
-  const { activeUserStore } = useStore();
+  const { activeUserStore, SERVICE_RADIUS_KM } = useStore();
   const { items, coupon, subtotal, discount, deliveryCharge, total, clearCart } = useCart();
 
-  const [selectedAddress, setSelectedAddress] = useState(userProfile?.addresses?.[0]?.id || '');
-  const [paymentMethod, setPaymentMethod]     = useState('cod');
-  const [loading, setLoading]                 = useState(false);
-  const [orderPlaced, setOrderPlaced]         = useState(null);
-  const [error, setError]                     = useState('');
-  const [addressShake, setAddressShake]       = useState(false);
-  const [addressMissing, setAddressMissing]   = useState(false);
+  const [selectedAddress, setSelectedAddress] = useState('');
+  const [paymentMethod,   setPaymentMethod]   = useState('cod');
+  const [loading,         setLoading]         = useState(false);
+  const [orderPlaced,     setOrderPlaced]     = useState(null);
+  const [error,           setError]           = useState('');
+  const [addressShake,    setAddressShake]    = useState(false);
+  const [addressMissing,  setAddressMissing]  = useState(false);
   const addressRef = useRef(null);
 
-  const address = userProfile?.addresses?.find((a) => a.id === selectedAddress);
+  // ── Items flagged unavailable by Cart.jsx reconciliation ─────────────────
+  const unavailableCartItems = items.filter((i) =>  i._unavailable);
+  const availableCartItems   = items.filter((i) => !i._unavailable);
+  const hasUnavailable       = unavailableCartItems.length > 0;
 
-  React.useEffect(() => {
+  // ── Filter: only addresses serviceable by the current active store ────────
+  const serviceableAddresses = useMemo(() => {
+    if (!userProfile?.addresses?.length) return [];
+    return userProfile.addresses.filter((addr) =>
+      isAddressServiceable(addr, activeUserStore, SERVICE_RADIUS_KM)
+    );
+  }, [userProfile?.addresses, activeUserStore?.id, SERVICE_RADIUS_KM]);
+
+  const nonServiceableAddresses = useMemo(() => {
+    if (!userProfile?.addresses?.length) return [];
+    return userProfile.addresses.filter((addr) =>
+      !isAddressServiceable(addr, activeUserStore, SERVICE_RADIUS_KM)
+    );
+  }, [userProfile?.addresses, activeUserStore?.id, SERVICE_RADIUS_KM]);
+
+  // ── Auto-select first serviceable address on load / store change ──────────
+  useEffect(() => {
+    if (!serviceableAddresses.length) { setSelectedAddress(''); return; }
+    // Keep current selection if it's still serviceable
+    const stillValid = serviceableAddresses.find((a) => a.id === selectedAddress);
+    if (!stillValid) setSelectedAddress(serviceableAddresses[0].id);
+  }, [serviceableAddresses]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     if (!document.getElementById('zap-shake-style')) {
       const style = document.createElement('style');
       style.id = 'zap-shake-style';
@@ -62,6 +103,8 @@ const Checkout = () => {
     }
   }, []);
 
+  const address = serviceableAddresses.find((a) => a.id === selectedAddress);
+
   const highlightAddressSection = () => {
     setAddressMissing(true);
     setAddressShake(true);
@@ -69,21 +112,20 @@ const Checkout = () => {
     setTimeout(() => setAddressShake(false), 700);
   };
 
-  // ── Place order ────────────────────────────────────────────────────────────
-  // For COD:     writes order with paymentStatus:'pending' (paid on delivery).
-  // For Razorpay: writes order with paymentStatus:'pending', then calls
-  //               verifyRazorpayPayment Cloud Function which HMAC-verifies the
-  //               Razorpay signature server-side and upgrades to 'paid'.
-  //               The order is never marked 'paid' from the client directly.
+  // ── Place order ───────────────────────────────────────────────────────────
   const placeOrder = async (razorpayResponse = null) => {
     if (!address) {
-      setError('Please select or add a delivery address to continue.');
+      setError('Please add or select a delivery address to continue.');
       highlightAddressSection();
       return;
     }
+    if (hasUnavailable) {
+      setError('Your cart has unavailable items. Please go back to Cart and remove them first.');
+      return;
+    }
+
     setLoading(true);
     setError('');
-    setAddressMissing(false);
     try {
       const orderNumber = generateOrderNumber();
       const orderData = {
@@ -94,9 +136,10 @@ const Checkout = () => {
         customerName:  userProfile?.displayName || user.displayName || '',
         customerEmail: user.email,
         customerPhone: address.phone || userProfile?.phone || '',
-        items: items.map((i) => ({
+        items: availableCartItems.map((i) => ({
           id:              i.id,
           name:            i.name,
+          unit:            i.unit || '',
           quantity:        i.quantity,
           mrp:             i.mrp,
           discountedPrice: i.discountedPrice || i.mrp,
@@ -109,9 +152,6 @@ const Checkout = () => {
         deliveryCharge,
         total,
         paymentMethod,
-        // ✅ Always write 'pending' — never trust the client to set 'paid'.
-        // COD stays 'pending' until admin marks it paid on delivery.
-        // Razorpay is upgraded to 'paid' by the verifyRazorpayPayment Cloud Function.
         paymentStatus: 'pending',
         paymentInfo:   null,
         status:        'placed',
@@ -122,7 +162,6 @@ const Checkout = () => {
 
       const ref = await addDoc(collection(db, COLLECTIONS.ORDERS), orderData);
 
-      // ── Verify Razorpay signature server-side ──────────────────────────────
       if (razorpayResponse) {
         try {
           const functions = getFunctions();
@@ -133,21 +172,17 @@ const Checkout = () => {
             razorpay_signature:  razorpayResponse.razorpay_signature,
             orderId:             ref.id,
           });
-          // Cloud Function has now set paymentStatus:'paid' on the order document.
         } catch (verifyErr) {
-          // Signature verification failed — order was created but payment is
-          // not confirmed. Show a specific error so the user can contact support.
           console.error('[Razorpay] Verification failed:', verifyErr);
           setError(
             'Payment received but verification failed. Please contact support with your order number: ' +
-            orderNumber
+            orderNumber,
           );
           setLoading(false);
           return;
         }
       }
 
-      // Stock deduction happens server-side via validateAndProcessOrder trigger.
       clearCart();
       setOrderPlaced({ ...orderData, id: ref.id });
     } catch (err) {
@@ -160,8 +195,12 @@ const Checkout = () => {
 
   const handleCheckout = async () => {
     if (!address) {
-      setError('Please select or add a delivery address to continue.');
+      setError('Please add or select a delivery address to continue.');
       highlightAddressSection();
+      return;
+    }
+    if (hasUnavailable) {
+      setError('Your cart has unavailable items. Go back to Cart and remove them first.');
       return;
     }
     if (paymentMethod === 'razorpay') {
@@ -183,7 +222,7 @@ const Checkout = () => {
     }
   };
 
-  // ── Order success screen ────────────────────────────────────────────────────
+  // ── Order success screen ──────────────────────────────────────────────────
   if (orderPlaced) {
     return (
       <Container maxWidth="sm" sx={{ py: 6, textAlign: 'center' }}>
@@ -207,26 +246,16 @@ const Checkout = () => {
           <Typography variant="caption" color="text.secondary" display="block" mb={1.5} textAlign="center">
             Need help with your order?
           </Typography>
-          <Box sx={{ display: 'flex', gap: 1.5, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Button variant="outlined" size="small" startIcon={<Phone />}
-              component="a" href="tel:+919876543210" sx={{ borderRadius: 10, fontSize: '0.8rem' }}>
-              Call Support
+          <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
+            <Button size="small" variant="outlined" startIcon={<Phone />} component="a" href="tel:+919876543210">
+              Call Us
             </Button>
-            <Button variant="outlined" size="small" startIcon={<HeadsetMic />}
-              onClick={() => navigate('/help')} sx={{ borderRadius: 10, fontSize: '0.8rem' }}>
-              Help Center
+            <Button size="small" variant="outlined" startIcon={<HeadsetMic />}
+              component="a" href="https://wa.me/919876543210" target="_blank">
+              WhatsApp
             </Button>
           </Box>
         </Box>
-      </Container>
-    );
-  }
-
-  if (!items.length) {
-    return (
-      <Container maxWidth="sm" sx={{ py: 6, textAlign: 'center' }}>
-        <Typography variant="h6" mb={2}>Your cart is empty</Typography>
-        <Button variant="contained" onClick={() => navigate('/')}>Shop Now</Button>
       </Container>
     );
   }
@@ -235,29 +264,49 @@ const Checkout = () => {
     <Box sx={{ pb: { xs: 13, md: 3 }, pt: 1 }}>
       <Container maxWidth="lg">
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, px: { xs: 1, sm: 0 } }}>
-          <IconButton onClick={() => navigate('/cart')} size="small"><ArrowBack /></IconButton>
+          <IconButton onClick={() => navigate(-1)} size="small"><ArrowBack /></IconButton>
           <Typography variant="h6" fontWeight={700}>Checkout</Typography>
         </Box>
 
-        <Collapse in={!!error}>
-          <Alert severity="error" icon={<ErrorOutline />} sx={{ mb: 2, borderRadius: 2 }} onClose={() => setError('')}>
+        {/* Cart unavailable items warning */}
+        {hasUnavailable && (
+          <Alert
+            severity="warning" sx={{ mb: 2, borderRadius: 2 }}
+            action={
+              <Button size="small" color="warning" onClick={() => navigate('/cart')}>
+                Go to Cart
+              </Button>
+            }
+          >
+            <Typography variant="body2" fontWeight={700} mb={0.2}>Cart has unavailable items</Typography>
+            <Typography variant="caption">
+              {unavailableCartItems.map((i) => i.unit ? `${i.name} (${i.unit})` : i.name).join(', ')} not
+              available at <strong>{activeUserStore?.name}</strong>. Remove them to proceed.
+            </Typography>
+          </Alert>
+        )}
+
+        {error && (
+          <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }} onClose={() => setError('')}>
             {error}
           </Alert>
-        </Collapse>
+        )}
 
         <Box sx={{ display: 'flex', gap: 3, flexDirection: { xs: 'column', md: 'row' } }}>
-          {/* ── Address ── */}
+          {/* ── Left column ────────────────────────────────────────────────── */}
           <Box sx={{ flex: 1 }}>
+
+            {/* ── Delivery Address ─────────────────────────────────────────── */}
             <Paper
               ref={addressRef}
               elevation={0}
               sx={{
-                border: `1.5px solid ${addressMissing && !address ? ZAP_COLORS.error || '#EF4444' : ZAP_COLORS.border}`,
+                border: `1.5px solid ${addressMissing ? ZAP_COLORS.error || '#EF4444' : ZAP_COLORS.border}`,
                 borderRadius: 3, p: 2.5, mb: 2,
                 animation: addressShake ? 'zapShake 0.6s ease' : 'none',
               }}
             >
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
                 <Typography variant="subtitle1" fontWeight={700} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <LocationOn fontSize="small" sx={{ color: ZAP_COLORS.primary }} /> Delivery Address
                 </Typography>
@@ -266,48 +315,132 @@ const Checkout = () => {
                 </Button>
               </Box>
 
-              {!userProfile?.addresses?.length ? (
-                <Box sx={{ textAlign: 'center', py: 2 }}>
-                  <Typography variant="body2" color="text.secondary" mb={1.5}>No saved addresses</Typography>
+              {/* Delivering from chip */}
+              {activeUserStore && (
+                <Box sx={{
+                  display: 'inline-flex', alignItems: 'center', gap: 0.6,
+                  px: 1.2, py: 0.4, borderRadius: 10, mb: 1.5,
+                  background: `${ZAP_COLORS.primary}10`,
+                  border: `1px solid ${ZAP_COLORS.primary}25`,
+                }}>
+                  <Box sx={{ width: 6, height: 6, borderRadius: '50%', background: ZAP_COLORS.primary, flexShrink: 0 }} />
+                  <Typography variant="caption" sx={{ color: ZAP_COLORS.primary, fontWeight: 600 }}>
+                    Delivering from {activeUserStore.name}
+                  </Typography>
+                </Box>
+              )}
+
+              {/* ── Case 1: No addresses at all ── */}
+              {!userProfile?.addresses?.length && (
+                <Box sx={{ textAlign: 'center', py: 2.5 }}>
+                  <Typography variant="body2" color="text.secondary" mb={1.5}>
+                    No saved addresses. Add one to continue.
+                  </Typography>
                   <Button variant="outlined" size="small" startIcon={<Add />}
                     onClick={() => navigate('/add-address?from=checkout')}>
                     Add Address
                   </Button>
                 </Box>
-              ) : (
-                <RadioGroup value={selectedAddress} onChange={(e) => setSelectedAddress(e.target.value)}>
-                  {userProfile.addresses.map((addr) => (
-                    <Paper
-                      key={addr.id}
-                      elevation={0}
-                      onClick={() => setSelectedAddress(addr.id)}
-                      sx={{
-                        border: `1.5px solid ${selectedAddress === addr.id ? ZAP_COLORS.primary : ZAP_COLORS.border}`,
-                        borderRadius: 2, p: 1.5, mb: 1, cursor: 'pointer',
-                        background: selectedAddress === addr.id ? `${ZAP_COLORS.primary}06` : 'transparent',
-                      }}
-                    >
-                      <FormControlLabel
-                        value={addr.id}
-                        control={<Radio size="small" sx={{ color: ZAP_COLORS.primary }} />}
-                        label={
-                          <Box>
-                            <Typography variant="body2" fontWeight={600}>{addr.name} — {addr.phone}</Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {addr.line1}{addr.line2 ? `, ${addr.line2}` : ''}, {addr.city}
-                              {addr.state ? `, ${addr.state}` : ''} — {addr.pincode}
-                            </Typography>
-                          </Box>
-                        }
-                        sx={{ m: 0, width: '100%' }}
-                      />
-                    </Paper>
-                  ))}
+              )}
+
+              {/* ── Case 2: Addresses exist but none serviceable by active store ── */}
+              {userProfile?.addresses?.length > 0 && serviceableAddresses.length === 0 && (
+                <Box sx={{
+                  p: 2, borderRadius: 2, textAlign: 'center',
+                  background: `${ZAP_COLORS.warning || '#F59E0B'}08`,
+                  border: `1px solid ${ZAP_COLORS.warning || '#F59E0B'}30`,
+                }}>
+                  <Typography variant="body2" fontWeight={600} mb={0.5}>
+                    None of your saved addresses are in {activeUserStore?.name}'s delivery area
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
+                    Change your delivery location from the header 📍 to match one of your saved addresses, or add a new address within this store's area.
+                  </Typography>
+                  <Button variant="outlined" size="small" startIcon={<Add />}
+                    onClick={() => navigate('/add-address?from=checkout')}>
+                    Add New Address
+                  </Button>
+                </Box>
+              )}
+
+              {/* ── Case 3: Show serviceable addresses as selectable list ── */}
+              {serviceableAddresses.length > 0 && (
+                <RadioGroup
+                  value={selectedAddress}
+                  onChange={(e) => setSelectedAddress(e.target.value)}
+                >
+                  {serviceableAddresses.map((addr) => {
+                    const isSelected    = selectedAddress === addr.id;
+                    const noCoords      = !addr.lat || !addr.lng;
+
+                    return (
+                      <Paper
+                        key={addr.id}
+                        elevation={0}
+                        onClick={() => setSelectedAddress(addr.id)}
+                        sx={{
+                          border: `1.5px solid ${isSelected ? ZAP_COLORS.primary : ZAP_COLORS.border}`,
+                          borderRadius: 2, p: 1.5, mb: 1, cursor: 'pointer',
+                          background: isSelected ? `${ZAP_COLORS.primary}06` : 'transparent',
+                          transition: 'all 0.15s',
+                          '&:hover': !isSelected ? { borderColor: `${ZAP_COLORS.primary}60` } : {},
+                        }}
+                      >
+                        <FormControlLabel
+                          value={addr.id}
+                          control={<Radio size="small" sx={{ color: ZAP_COLORS.primary }} />}
+                          label={
+                            <Box sx={{ width: '100%' }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                <Typography variant="body2" fontWeight={600}>
+                                  {addr.name} — {addr.phone}
+                                </Typography>
+                                {noCoords && (
+                                  <Chip
+                                    label="Location unverified"
+                                    size="small"
+                                    sx={{
+                                      fontSize: '0.62rem', height: 18,
+                                      background: `${ZAP_COLORS.warning || '#F59E0B'}15`,
+                                      color: ZAP_COLORS.warning || '#F59E0B',
+                                      border: `1px solid ${ZAP_COLORS.warning || '#F59E0B'}30`,
+                                    }}
+                                  />
+                                )}
+                              </Box>
+                              <Typography variant="caption" color="text.secondary">
+                                {addr.label && <><strong>{addr.label}</strong> · </>}
+                                {addr.line1}{addr.line2 ? `, ${addr.line2}` : ''}, {addr.city}
+                                {addr.state ? `, ${addr.state}` : ''} — {addr.pincode}
+                              </Typography>
+                            </Box>
+                          }
+                          sx={{ m: 0, width: '100%', alignItems: 'flex-start' }}
+                        />
+                      </Paper>
+                    );
+                  })}
                 </RadioGroup>
+              )}
+
+              {/* ── Hint: user has addresses but some are in other store areas ── */}
+              {nonServiceableAddresses.length > 0 && serviceableAddresses.length > 0 && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                  {nonServiceableAddresses.length} saved address{nonServiceableAddresses.length > 1 ? 'es are' : ' is'} in
+                  a different delivery area and not shown. Change your store from the header 📍 to use them.
+                </Typography>
+              )}
+
+              {/* ── Hint: all addresses are from a different store (same as Case 2 but different wording) ── */}
+              {nonServiceableAddresses.length > 0 && serviceableAddresses.length === 0 && activeUserStore && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                  💡 Tip: Your saved addresses are near a different store. Use the 📍 location chip in
+                  the header to switch stores and access them.
+                </Typography>
               )}
             </Paper>
 
-            {/* ── Payment Method ── */}
+            {/* ── Payment Method ─────────────────────────────────────────── */}
             <Paper elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3, p: 2.5 }}>
               <Typography variant="subtitle1" fontWeight={700} mb={1.5}>Payment Method</Typography>
               <RadioGroup value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
@@ -317,8 +450,12 @@ const Checkout = () => {
                   background: paymentMethod === 'cod' ? `${ZAP_COLORS.primary}06` : 'transparent',
                 }}>
                   <FormControlLabel value="cod" control={<Radio size="small" />}
-                    label={<Box><Typography variant="body2" fontWeight={600}>Cash on Delivery</Typography>
-                    <Typography variant="caption" color="text.secondary">Pay when your order arrives</Typography></Box>}
+                    label={
+                      <Box>
+                        <Typography variant="body2" fontWeight={600}>Cash on Delivery</Typography>
+                        <Typography variant="caption" color="text.secondary">Pay when your order arrives</Typography>
+                      </Box>
+                    }
                     sx={{ m: 0 }} />
                 </Paper>
                 <Paper elevation={0} onClick={() => setPaymentMethod('razorpay')} sx={{
@@ -327,15 +464,19 @@ const Checkout = () => {
                   background: paymentMethod === 'razorpay' ? `${ZAP_COLORS.primary}06` : 'transparent',
                 }}>
                   <FormControlLabel value="razorpay" control={<Radio size="small" />}
-                    label={<Box><Typography variant="body2" fontWeight={600}>Pay Online</Typography>
-                    <Typography variant="caption" color="text.secondary">UPI, cards, netbanking via Razorpay</Typography></Box>}
+                    label={
+                      <Box>
+                        <Typography variant="body2" fontWeight={600}>Pay Online</Typography>
+                        <Typography variant="caption" color="text.secondary">UPI, cards, netbanking via Razorpay</Typography>
+                      </Box>
+                    }
                     sx={{ m: 0 }} />
                 </Paper>
               </RadioGroup>
             </Paper>
           </Box>
 
-          {/* ── Order Summary ── */}
+          {/* ── Order Summary ──────────────────────────────────────────────── */}
           <Box sx={{ width: { xs: '100%', md: 320 }, flexShrink: 0 }}>
             <Paper elevation={0} sx={{
               border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3, p: 2.5,
@@ -343,66 +484,57 @@ const Checkout = () => {
             }}>
               <Typography variant="subtitle1" fontWeight={700} mb={2}>Order Summary</Typography>
 
-              {/* Items list — show MRP per line */}
-              {items.map((item) => (
+              {availableCartItems.map((item) => (
                 <Box key={item.id} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ flex: 1, pr: 1 }} noWrap>
-                    {item.name} × {item.quantity}
-                  </Typography>
-                  <Typography variant="body2" fontWeight={500}>
-                    ₹{item.mrp * item.quantity}
-                  </Typography>
+                  <Box sx={{ flex: 1, pr: 1 }}>
+                    <Typography variant="body2" color="text.secondary" noWrap>
+                      {item.name} × {item.quantity}
+                    </Typography>
+                    {item.unit && (
+                      <Typography variant="caption" color="text.secondary" sx={{ opacity: 0.7 }}>
+                        {item.unit}
+                      </Typography>
+                    )}
+                  </Box>
+                  <Typography variant="body2" fontWeight={500}>₹{item.mrp * item.quantity}</Typography>
                 </Box>
               ))}
 
               <Divider sx={{ my: 1.5 }} />
 
-              {/* Product savings — only show if there's an actual saving */}
               {(() => {
-                const mrpTotal      = items.reduce((sum, i) => sum + i.mrp * i.quantity, 0);
-                const savedAmount   = items.reduce((sum, i) => sum + ((i.mrp - (i.discountedPrice || i.mrp)) * i.quantity), 0);
+                const mrpTotal    = availableCartItems.reduce((s, i) => s + i.mrp * i.quantity, 0);
+                const savedAmount = availableCartItems.reduce(
+                  (s, i) => s + ((i.mrp - (i.discountedPrice || i.mrp)) * i.quantity), 0
+                );
                 return (
                   <>
-                    {/* MRP subtotal */}
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                       <Typography variant="body2" color="text.secondary">MRP Total</Typography>
                       <Typography variant="body2" fontWeight={500}>₹{mrpTotal}</Typography>
                     </Box>
-
-                    {/* Product savings */}
                     {savedAmount > 0 && (
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                         <Typography variant="body2" color="text.secondary">Product Savings</Typography>
-                        <Typography variant="body2" fontWeight={600} color="success.main">
-                          -₹{savedAmount}
-                        </Typography>
+                        <Typography variant="body2" fontWeight={600} color="success.main">-₹{savedAmount}</Typography>
                       </Box>
                     )}
-
-                    {/* Coupon discount */}
                     {coupon && discount > 0 && (
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                           <Typography variant="body2" color="text.secondary">Coupon</Typography>
                           <Chip label={coupon.code} size="small" color="success" sx={{ fontSize: '0.7rem', height: 20 }} />
                         </Box>
-                        <Typography variant="body2" fontWeight={600} color="success.main">
-                          -₹{discount}
-                        </Typography>
+                        <Typography variant="body2" fontWeight={600} color="success.main">-₹{discount}</Typography>
                       </Box>
                     )}
-
-                    {/* Delivery */}
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                       <Typography variant="body2" color="text.secondary">Delivery</Typography>
                       {deliveryCharge === 0
                         ? <Typography variant="body2" fontWeight={600} sx={{ color: ZAP_COLORS.accentGreen || '#06D6A0' }}>FREE</Typography>
                         : <Typography variant="body2" fontWeight={500}>₹{deliveryCharge}</Typography>}
                     </Box>
-
                     <Divider sx={{ my: 1.5 }} />
-
-                    {/* Total */}
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
                       <Typography fontWeight={700}>Total</Typography>
                       <Typography fontWeight={700} fontSize="1.1rem">₹{total.toFixed(0)}</Typography>
@@ -410,12 +542,21 @@ const Checkout = () => {
                   </>
                 );
               })()}
-              <Button fullWidth variant="contained" size="large" onClick={handleCheckout} disabled={loading}
-                sx={{ borderRadius: 3, py: 1.5, fontWeight: 700 }}>
+
+              <Button
+                fullWidth variant="contained" size="large"
+                onClick={handleCheckout}
+                disabled={loading || hasUnavailable || !address || serviceableAddresses.length === 0}
+                sx={{ borderRadius: 3, py: 1.5, fontWeight: 700 }}
+              >
                 {loading
                   ? <CircularProgress size={22} sx={{ color: '#fff' }} />
                   : paymentMethod === 'cod' ? 'Place Order' : `Pay ₹${total}`}
               </Button>
+
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 1.5 }}>
+                🔒 Secure checkout
+              </Typography>
             </Paper>
           </Box>
         </Box>

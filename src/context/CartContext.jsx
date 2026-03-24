@@ -1,3 +1,6 @@
+// ============================================================
+// src/context/CartContext.jsx
+// ============================================================
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
 const CartContext = createContext(null);
@@ -66,14 +69,26 @@ export const CartProvider = ({ children }) => {
     return item ? item.quantity : 0;
   }, [items]);
 
+  // ── Replaces the entire items array (used by store reconciliation) ─────────
+  // Cart.jsx calls this after querying the new store's products and resolving
+  // which items exist there and which don't.
+  const replaceItems = useCallback((newItems) => {
+    setItems(newItems);
+  }, []);
+
   // mrpTotal: sum of full MRP prices (before any product discounts)
-  const mrpTotal = items.reduce((sum, item) => sum + item.mrp * item.quantity, 0);
+  // Unavailable items are excluded from all totals
+  const mrpTotal = items
+    .filter((i) => !i._unavailable)
+    .reduce((sum, item) => sum + item.mrp * item.quantity, 0);
 
   // subtotal: sum of selling prices (discounted or MRP if no discount)
-  const subtotal = items.reduce((sum, item) => {
-    const price = item.discountedPrice || item.mrp;
-    return sum + price * item.quantity;
-  }, 0);
+  const subtotal = items
+    .filter((i) => !i._unavailable)
+    .reduce((sum, item) => {
+      const price = item.discountedPrice || item.mrp;
+      return sum + price * item.quantity;
+    }, 0);
 
   const discount = coupon
     ? coupon.type === 'percent'
@@ -83,13 +98,17 @@ export const CartProvider = ({ children }) => {
 
   const deliveryCharge = subtotal >= FREE_DELIVERY_ABOVE ? 0 : DELIVERY_CHARGE;
   const total = subtotal - discount + deliveryCharge;
-  const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
-  const savings = items.reduce((sum, item) => {
-    if (item.discountedPrice && item.mrp > item.discountedPrice) {
-      return sum + (item.mrp - item.discountedPrice) * item.quantity;
-    }
-    return sum;
-  }, 0);
+  const totalItems = items
+    .filter((i) => !i._unavailable)
+    .reduce((sum, item) => sum + item.quantity, 0);
+  const savings = items
+    .filter((i) => !i._unavailable)
+    .reduce((sum, item) => {
+      if (item.discountedPrice && item.mrp > item.discountedPrice) {
+        return sum + (item.mrp - item.discountedPrice) * item.quantity;
+      }
+      return sum;
+    }, 0);
 
   const value = {
     items,
@@ -99,6 +118,7 @@ export const CartProvider = ({ children }) => {
     removeFromCart,
     updateQuantity,
     clearCart,
+    replaceItems,   // ← new
     isInCart,
     getQuantity,
     mrpTotal,

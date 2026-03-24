@@ -365,29 +365,55 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
     const orderId     = event.params.orderId;
     const userId      = after.userId;
     const orderNumber = after.orderNumber || orderId.slice(-6).toUpperCase();
-
-    // ── Restore stock when an order is cancelled ─────────────────────────────
-    // Covers both user-initiated cancels and admin-initiated cancels.
-    // Client-side stock restoration has been removed from both; this Function
-    // is the single source of truth for stock restoration.
-    if (newStatus === 'cancelled' && Array.isArray(after.items) && after.items.length > 0) {
-      try {
-        const batch = db.batch();
-        for (const item of after.items) {
-          const productSnap = await db.collection('products').doc(item.id).get();
-          if (productSnap.exists) {
-            const currentStock = productSnap.data().stock || 0;
-            batch.update(productSnap.ref, {
-              stock:     currentStock + item.quantity,
-              updatedAt: FieldValue.serverTimestamp(),
-            });
+    const prevStatus  = before.status;
+    const items       = after.items;
+ 
+    if (Array.isArray(items) && items.length > 0) {
+ 
+      // ── Case 1 & 3: restock on cancel ──────────────────────────────────────
+      if (newStatus === 'cancelled' && prevStatus !== 'cancelled') {
+        try {
+          const batch = db.batch();
+          for (const item of items) {
+            const productSnap = await db.collection('products').doc(item.id).get();
+            if (productSnap.exists) {
+              const currentStock = productSnap.data().stock || 0;
+              batch.update(productSnap.ref, {
+                stock:     currentStock + item.quantity,
+                updatedAt: FieldValue.serverTimestamp(),
+              });
+            }
           }
+          await batch.commit();
+          console.log(`[Stock] Restocked for order ${orderId} (${prevStatus} → cancelled)`);
+        } catch (err) {
+          console.error(`[Stock] Restock failed for order ${orderId}:`, err.message);
         }
-        await batch.commit();
-        console.log(`[Stock] Restored for cancelled order ${orderId}`);
-      } catch (err) {
-        console.error(`[Stock] Restore failed for order ${orderId}:`, err.message);
       }
+ 
+      // ── Case 2: deduct on cancelled → delivered (admin override) ───────────
+      // The order was previously cancelled (stock already restored at that time).
+      // Admin is now marking it as delivered, so consume the stock again.
+      if (prevStatus === 'cancelled' && newStatus === 'delivered') {
+        try {
+          const batch = db.batch();
+          for (const item of items) {
+            const productSnap = await db.collection('products').doc(item.id).get();
+            if (productSnap.exists) {
+              const currentStock = productSnap.data().stock || 0;
+              batch.update(productSnap.ref, {
+                stock:     Math.max(0, currentStock - item.quantity),
+                updatedAt: FieldValue.serverTimestamp(),
+              });
+            }
+          }
+          await batch.commit();
+          console.log(`[Stock] Deducted for order ${orderId} (cancelled → delivered override)`);
+        } catch (err) {
+          console.error(`[Stock] Deduct failed for order ${orderId}:`, err.message);
+        }
+      }
+ 
     }
 
     // ── Send FCM notification to user ────────────────────────────────────────
