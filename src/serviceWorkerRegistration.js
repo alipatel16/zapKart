@@ -4,36 +4,23 @@ const isLocalhost = Boolean(
     window.location.hostname.match(/^127(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$/)
 );
 
-// Capture whether the page already had a SW controller BEFORE this load.
-// • false = first-ever install  → no reload needed; new SW just starts caching
-//                                  for the NEXT visit.
-// • true  = SW upgrade scenario → reload so the new SW serves fresh assets.
-const wasControlledOnLoad = !!navigator.serviceWorker?.controller;
-
-// Registered ONCE at module level — never accumulates, never fires twice.
+// Registered ONCE at module level — never accumulates, never fires twice
 navigator.serviceWorker?.addEventListener('controllerchange', () => {
-  // ── First install guard ───────────────────────────────────────────────────
-  // On a brand-new install (no previous SW), clientsClaim() in the SW fires
-  // controllerchange, but there's nothing stale to evict.  Reloading here
-  // would break the first-load experience (and cause the drawer/CTA glitch).
-  if (!wasControlledOnLoad) {
-    console.log('[SW] First install — skipping reload.');
-    return;
-  }
-
-  // ── SW update scenario ────────────────────────────────────────────────────
-  // A new SW just took over from an old one.  Reload once so the page is
-  // served by the fresh SW.  The sessionStorage flag prevents a second
-  // reload if controllerchange fires again before the page unloads.
   if (sessionStorage.getItem('sw-reloading')) {
     sessionStorage.removeItem('sw-reloading');
     return;
   }
   sessionStorage.setItem('sw-reloading', '1');
 
-  console.log('[SW] Controller updated — reloading for fresh assets.');
-  // Small delay so any in-flight async work can settle before the reload.
-  setTimeout(() => window.location.reload(), 300);
+  // ✅ Clear all caches from the window side too (belt-and-suspenders)
+  if ('caches' in window) {
+    caches.keys().then((names) => {
+      names.forEach((name) => caches.delete(name));
+    });
+  }
+
+  // Small delay so cache deletion completes before reload
+  setTimeout(() => window.location.reload(true), 300);
 });
 
 export function register(config) {
@@ -62,8 +49,8 @@ function registerValidSW(swUrl, config) {
         installingWorker.onstatechange = () => {
           if (installingWorker.state === 'installed') {
             if (navigator.serviceWorker.controller) {
-              // New SW is waiting — send SKIP_WAITING.
-              // The controllerchange listener above handles the single reload.
+              // New SW is waiting — call onUpdate which sends SKIP_WAITING.
+              // The controllerchange listener above will then reload exactly once.
               if (config && config.onUpdate) config.onUpdate(registration);
             } else {
               if (config && config.onSuccess) config.onSuccess(registration);
@@ -85,7 +72,8 @@ function checkValidServiceWorker(swUrl, config) {
         response.status === 404 ||
         (contentType != null && contentType.indexOf('javascript') === -1)
       ) {
-        // SW file not found — unregister silently.
+        // SW file not found — unregister silently, no reload here.
+        // The app will work without SW on next natural navigation.
         navigator.serviceWorker.ready.then((reg) => reg.unregister());
       } else {
         registerValidSW(swUrl, config);
