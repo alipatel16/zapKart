@@ -4,6 +4,7 @@ import {
   Routes,
   Route,
   Navigate,
+  Outlet,
 } from "react-router-dom";
 import {
   ThemeProvider,
@@ -149,10 +150,6 @@ const AppShell = ({ children }) => {
 };
 
 // ✅ SECURITY FIX: Admin route guard — enforced at the router level.
-// Previously the only protection was inside AdminLayout's React state (isAdmin),
-// which a determined user could bypass. This component blocks the route entirely
-// until Firebase has resolved the session AND confirmed role === 'admin'.
-// Non-admins are redirected to '/' before any admin JS chunk is rendered.
 const AdminRoute = ({ children }) => {
   const { user, isAdmin, loading } = useAuth();
   if (loading) return <BootScreen />;
@@ -207,13 +204,17 @@ const BootScreen = () => (
   </Box>
 );
 
-// ── User layout ───────────────────────────────────────────────────────────────
-const UserLayout = ({ children }) => (
+// ── User layout — mounts ONCE, uses <Outlet> for page content ─────────────────
+// This mirrors how AdminLayout works: Header, BottomNav, ActiveOrdersBar stay
+// mounted across navigations. Only the inner page swaps via <Outlet>.
+const UserLayout = () => (
   <LocationGate>
     <Box sx={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
       <Header />
       <Box component="main" sx={{ flex: 1 }}>
-        <PageTransition>{children}</PageTransition>
+        <PageTransition>
+          <Outlet />
+        </PageTransition>
       </Box>
       <Suspense fallback={null}>
         <ActiveOrdersBar />
@@ -234,109 +235,127 @@ function App() {
         <AuthProvider>
           <StoreProvider>
             <CartProvider>
-              <CartReconciler />   
+              <CartReconciler />
               <NotificationsInit />
               <Router>
                 <ScrollToTop />
                 <Suspense fallback={<BootScreen />}>
                   <AppShell>
                     <Routes>
-                      {/* USER ROUTES */}
-                      <Route
-                        path="/"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
+                      {/* ── USER ROUTES — nested under single UserLayout ── */}
+                      <Route element={<UserLayout />}>
+                        <Route
+                          index
+                          element={
+                            <Suspense fallback={null}>
                               <Home />
-                            </UserLayout>
-                          </Suspense>
-                        }
-                      />
+                            </Suspense>
+                          }
+                        />
+                        <Route
+                          path="cart"
+                          element={
+                            <Suspense fallback={null}>
+                              <Cart />
+                            </Suspense>
+                          }
+                        />
+                        <Route
+                          path="checkout"
+                          element={
+                            <Suspense fallback={null}>
+                              <Checkout />
+                            </Suspense>
+                          }
+                        />
+                        <Route
+                          path="orders"
+                          element={
+                            <Suspense fallback={null}>
+                              <OrderHistory />
+                            </Suspense>
+                          }
+                        />
+                        <Route
+                          path="product/:id"
+                          element={
+                            <Suspense fallback={null}>
+                              <ProductDetail />
+                            </Suspense>
+                          }
+                        />
+                        <Route
+                          path="category/:id"
+                          element={
+                            <Suspense fallback={null}>
+                              <CategoryPage />
+                            </Suspense>
+                          }
+                        />
+                        <Route
+                          path="categories"
+                          element={
+                            <Suspense fallback={null}>
+                              <CategoriesPage />
+                            </Suspense>
+                          }
+                        />
+                        <Route
+                          path="products"
+                          element={
+                            <Suspense fallback={null}>
+                              <CategoryPage />
+                            </Suspense>
+                          }
+                        />
+                        <Route
+                          path="profile"
+                          element={
+                            <Suspense fallback={null}>
+                              <Profile />
+                            </Suspense>
+                          }
+                        />
+                        <Route
+                          path="help"
+                          element={
+                            <Suspense fallback={null}>
+                              <HelpPage />
+                            </Suspense>
+                          }
+                        />
+                        <Route
+                          path="about"
+                          element={
+                            <Suspense fallback={null}>
+                              <AboutPage />
+                            </Suspense>
+                          }
+                        />
+                        <Route
+                          path="privacy"
+                          element={
+                            <Suspense fallback={null}>
+                              <PrivacyPage />
+                            </Suspense>
+                          }
+                        />
+                        <Route
+                          path="terms"
+                          element={
+                            <Suspense fallback={null}>
+                              <TermsPage />
+                            </Suspense>
+                          }
+                        />
+                      </Route>
+
+                      {/* ── Standalone pages (no UserLayout shell) ── */}
                       <Route
                         path="/login"
                         element={
                           <Suspense fallback={null}>
                             <Auth />
-                          </Suspense>
-                        }
-                      />
-                      <Route
-                        path="/cart"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
-                              <Cart />
-                            </UserLayout>
-                          </Suspense>
-                        }
-                      />
-                      <Route
-                        path="/checkout"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
-                              <Checkout />
-                            </UserLayout>
-                          </Suspense>
-                        }
-                      />
-                      <Route
-                        path="/orders"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
-                              <OrderHistory />
-                            </UserLayout>
-                          </Suspense>
-                        }
-                      />
-                      <Route
-                        path="/product/:id"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
-                              <ProductDetail />
-                            </UserLayout>
-                          </Suspense>
-                        }
-                      />
-                      <Route
-                        path="/category/:id"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
-                              <CategoryPage />
-                            </UserLayout>
-                          </Suspense>
-                        }
-                      />
-                      <Route
-                        path="/categories"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
-                              <CategoriesPage />
-                            </UserLayout>
-                          </Suspense>
-                        }
-                      />
-                      <Route
-                        path="/products"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
-                              <CategoryPage />
-                            </UserLayout>
-                          </Suspense>
-                        }
-                      />
-                      <Route
-                        path="/profile"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
-                              <Profile />
-                            </UserLayout>
                           </Suspense>
                         }
                       />
@@ -356,48 +375,8 @@ function App() {
                           </Suspense>
                         }
                       />
-                      <Route
-                        path="/help"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
-                              <HelpPage />
-                            </UserLayout>
-                          </Suspense>
-                        }
-                      />
-                      <Route
-                        path="/about"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
-                              <AboutPage />
-                            </UserLayout>
-                          </Suspense>
-                        }
-                      />
-                      <Route
-                        path="/privacy"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
-                              <PrivacyPage />
-                            </UserLayout>
-                          </Suspense>
-                        }
-                      />
-                      <Route
-                        path="/terms"
-                        element={
-                          <Suspense fallback={null}>
-                            <UserLayout>
-                              <TermsPage />
-                            </UserLayout>
-                          </Suspense>
-                        }
-                      />
 
-                      {/* ADMIN ROUTES — all wrapped in AdminRoute guard */}
+                      {/* ── ADMIN ROUTES — already uses Outlet pattern ── */}
                       <Route
                         path="/admin"
                         element={
