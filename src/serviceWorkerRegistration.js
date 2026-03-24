@@ -6,13 +6,21 @@ const isLocalhost = Boolean(
 
 // Registered ONCE at module level — never accumulates, never fires twice
 navigator.serviceWorker?.addEventListener('controllerchange', () => {
-  // If we already reloaded for a SW update in this browser session, don't reload again.
   if (sessionStorage.getItem('sw-reloading')) {
-    sessionStorage.removeItem('sw-reloading'); // clear for next genuine update
+    sessionStorage.removeItem('sw-reloading');
     return;
   }
   sessionStorage.setItem('sw-reloading', '1');
-  window.location.reload();
+
+  // ✅ Clear all caches from the window side too (belt-and-suspenders)
+  if ('caches' in window) {
+    caches.keys().then((names) => {
+      names.forEach((name) => caches.delete(name));
+    });
+  }
+
+  // Small delay so cache deletion completes before reload
+  setTimeout(() => window.location.reload(true), 300);
 });
 
 export function register(config) {

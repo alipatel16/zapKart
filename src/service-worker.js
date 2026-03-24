@@ -23,6 +23,21 @@ import { CacheableResponsePlugin } from 'workbox-cacheable-response';
 
 clientsClaim();
 
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((cacheNames) =>
+      Promise.all(
+        cacheNames.map((cacheName) => {
+          console.log('[SW] Deleting old cache:', cacheName);
+          return caches.delete(cacheName);
+        })
+      )
+    ).then(() => {
+      console.log('[SW] All caches cleared after update.');
+    })
+  );
+});
+
 // ── Precache all build assets injected by CRA/Workbox ────────────────────────
 precacheAndRoute(self.__WB_MANIFEST);
 
