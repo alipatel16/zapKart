@@ -241,6 +241,10 @@ const Header = () => {
   const [searchOpen, setSearchOpen] = useState(false);
   const [locationDialogOpen, setLocationDialogOpen] = useState(false);
 
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => { setMounted(true); }, []); 
+
   const handleLogout = async () => { await logout(); setDrawerOpen(false); navigate('/'); };
 
   const navItems = [
@@ -323,75 +327,77 @@ const Header = () => {
       {searchOpen && <SearchOverlay onClose={() => setSearchOpen(false)} />}
 
       {/* Side Drawer */}
-      <Drawer anchor="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} PaperProps={{ sx: { width: 280, background: ZAP_COLORS.secondary, color: '#fff', pt: 2 } }}>
-        <Box sx={{ px: 2.5, pb: 3 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Box sx={{ width: 36, height: 36, borderRadius: 2, background: `linear-gradient(135deg, ${ZAP_COLORS.primary}, ${ZAP_COLORS.primaryDark})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <FlashOn sx={{ color: '#fff', fontSize: 22 }} />
+      {mounted && (
+        <Drawer anchor="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} PaperProps={{ sx: { width: 280, background: ZAP_COLORS.secondary, color: '#fff', pt: 2 } }}>
+          <Box sx={{ px: 2.5, pb: 3 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box sx={{ width: 36, height: 36, borderRadius: 2, background: `linear-gradient(135deg, ${ZAP_COLORS.primary}, ${ZAP_COLORS.primaryDark})`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <FlashOn sx={{ color: '#fff', fontSize: 22 }} />
+                </Box>
+                <Typography sx={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: '1.3rem' }}>ZAP</Typography>
               </Box>
-              <Typography sx={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: '1.3rem' }}>ZAP</Typography>
+              <IconButton size="small" onClick={() => setDrawerOpen(false)} sx={{ color: 'rgba(255,255,255,0.6)' }}><Close /></IconButton>
             </Box>
-            <IconButton size="small" onClick={() => setDrawerOpen(false)} sx={{ color: 'rgba(255,255,255,0.6)' }}><Close /></IconButton>
+
+            {activeUserStore && (
+              <Box sx={{ p: 1.5, borderRadius: 2, background: 'rgba(255,107,53,0.15)', mb: 2 }}>
+                <Typography variant="caption" sx={{ color: ZAP_COLORS.primary, fontWeight: 700, fontSize: '0.68rem' }}>📍 SERVING FROM</Typography>
+                <Typography variant="body2" fontWeight={600} color="white">{activeUserStore.name}</Typography>
+                <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }}>{activeUserStore.address}</Typography>
+              </Box>
+            )}
+
+            {user ? (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                <Avatar src={user.photoURL} sx={{ width: 44, height: 44 }}>{user.displayName?.[0]}</Avatar>
+                <Box>
+                  <Typography fontWeight={600} fontSize="0.95rem">{user.displayName || 'User'}</Typography>
+                  <Typography fontSize="0.75rem" sx={{ color: 'rgba(255,255,255,0.5)' }} noWrap>{user.email}</Typography>
+                </Box>
+              </Box>
+            ) : (
+              <Button fullWidth variant="contained" startIcon={<Login />} onClick={() => { navigate('/login'); setDrawerOpen(false); }}>Login / Sign Up</Button>
+            )}
           </Box>
 
-          {activeUserStore && (
-            <Box sx={{ p: 1.5, borderRadius: 2, background: 'rgba(255,107,53,0.15)', mb: 2 }}>
-              <Typography variant="caption" sx={{ color: ZAP_COLORS.primary, fontWeight: 700, fontSize: '0.68rem' }}>📍 SERVING FROM</Typography>
-              <Typography variant="body2" fontWeight={600} color="white">{activeUserStore.name}</Typography>
-              <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.5)' }}>{activeUserStore.address}</Typography>
-            </Box>
-          )}
+          <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)' }} />
 
-          {user ? (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-              <Avatar src={user.photoURL} sx={{ width: 44, height: 44 }}>{user.displayName?.[0]}</Avatar>
-              <Box>
-                <Typography fontWeight={600} fontSize="0.95rem">{user.displayName || 'User'}</Typography>
-                <Typography fontSize="0.75rem" sx={{ color: 'rgba(255,255,255,0.5)' }} noWrap>{user.email}</Typography>
-              </Box>
-            </Box>
-          ) : (
-            <Button fullWidth variant="contained" startIcon={<Login />} onClick={() => { navigate('/login'); setDrawerOpen(false); }}>Login / Sign Up</Button>
-          )}
-        </Box>
-
-        <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)' }} />
-
-        <List sx={{ px: 1 }}>
-          {navItems.map((item) => (
-            <ListItemButton key={item.path} onClick={() => { setDrawerOpen(false); setTimeout(() => {navigate(item.path);}) }} sx={{ borderRadius: 2, mb: 0.5, background: location.pathname === item.path ? `${ZAP_COLORS.primary}20` : 'transparent', color: location.pathname === item.path ? ZAP_COLORS.primary : 'rgba(255,255,255,0.8)', '&:hover': { background: `${ZAP_COLORS.primary}15` } }}>
-              <ListItemIcon sx={{ color: 'inherit', minWidth: 40 }}>{item.icon}</ListItemIcon>
-              <ListItemText primary={item.label} primaryTypographyProps={{ fontWeight: 500, fontSize: '0.9rem' }} />
-            </ListItemButton>
-          ))}
-
-          {/* Info pages */}
-          <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)', my: 0.5 }} />
-          {[
-            { label: 'Help & Support', path: '/help' },
-            { label: 'About Us',       path: '/about' },
-            { label: 'Privacy Policy', path: '/privacy' },
-            { label: 'Terms & Conditions', path: '/terms' },
-          ].map((item) => (
-            <ListItemButton key={item.path} onClick={() => { setDrawerOpen(false); setTimeout(() => {navigate(item.path);}) }} sx={{ borderRadius: 2, mb: 0.3, color: 'rgba(255,255,255,0.55)', '&:hover': { background: `${ZAP_COLORS.primary}15`, color: '#fff' } }}>
-              <ListItemText primary={item.label} primaryTypographyProps={{ fontSize: '0.82rem' }} />
-            </ListItemButton>
-          ))}
-        </List>
-
-        {user && (
-          <>
-            <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)', mt: 1 }} />
-            <List sx={{ px: 1 }}>
-              <ListItemButton onClick={handleLogout} sx={{ borderRadius: 2, color: '#EF4444', '&:hover': { background: '#EF444415' } }}>
-                <ListItemIcon sx={{ color: 'inherit', minWidth: 40 }}><Logout /></ListItemIcon>
-                <ListItemText primary="Logout" primaryTypographyProps={{ fontWeight: 500, fontSize: '0.9rem' }} />
+          <List sx={{ px: 1 }}>
+            {navItems.map((item) => (
+              <ListItemButton key={item.path} onClick={() => { setDrawerOpen(false); setTimeout(() => {navigate(item.path);}) }} sx={{ borderRadius: 2, mb: 0.5, background: location.pathname === item.path ? `${ZAP_COLORS.primary}20` : 'transparent', color: location.pathname === item.path ? ZAP_COLORS.primary : 'rgba(255,255,255,0.8)', '&:hover': { background: `${ZAP_COLORS.primary}15` } }}>
+                <ListItemIcon sx={{ color: 'inherit', minWidth: 40 }}>{item.icon}</ListItemIcon>
+                <ListItemText primary={item.label} primaryTypographyProps={{ fontWeight: 500, fontSize: '0.9rem' }} />
               </ListItemButton>
-            </List>
-          </>
-        )}
-      </Drawer>
+            ))}
+
+            {/* Info pages */}
+            <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)', my: 0.5 }} />
+            {[
+              { label: 'Help & Support', path: '/help' },
+              { label: 'About Us',       path: '/about' },
+              { label: 'Privacy Policy', path: '/privacy' },
+              { label: 'Terms & Conditions', path: '/terms' },
+            ].map((item) => (
+              <ListItemButton key={item.path} onClick={() => { setDrawerOpen(false); setTimeout(() => {navigate(item.path);}) }} sx={{ borderRadius: 2, mb: 0.3, color: 'rgba(255,255,255,0.55)', '&:hover': { background: `${ZAP_COLORS.primary}15`, color: '#fff' } }}>
+                <ListItemText primary={item.label} primaryTypographyProps={{ fontSize: '0.82rem' }} />
+              </ListItemButton>
+            ))}
+          </List>
+
+          {user && (
+            <>
+              <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)', mt: 1 }} />
+              <List sx={{ px: 1 }}>
+                <ListItemButton onClick={handleLogout} sx={{ borderRadius: 2, color: '#EF4444', '&:hover': { background: '#EF444415' } }}>
+                  <ListItemIcon sx={{ color: 'inherit', minWidth: 40 }}><Logout /></ListItemIcon>
+                  <ListItemText primary="Logout" primaryTypographyProps={{ fontWeight: 500, fontSize: '0.9rem' }} />
+                </ListItemButton>
+              </List>
+            </>
+          )}
+        </Drawer>
+      )}
 
       <LocationPickerDialog open={locationDialogOpen} onClose={() => setLocationDialogOpen(false)} />
     </>

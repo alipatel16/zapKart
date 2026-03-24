@@ -43,8 +43,8 @@ const generateOrderNumber = () =>
 // but still selectable (we can't validate them).
 // ─────────────────────────────────────────────────────────────────────────────
 const isAddressServiceable = (addr, store, SERVICE_RADIUS_KM) => {
-  if (!store) return true;
-  if (!addr.lat || !addr.lng) return true;
+  if (!store) return true;                  // no store context yet — don't filter
+  if (!addr.lat || !addr.lng) return true;  // no coords — can't validate, keep it
   const radius = store.deliveryRadiusKm || SERVICE_RADIUS_KM;
   const dist   = getDistanceKm(
     parseFloat(addr.lat), parseFloat(addr.lng),
@@ -78,23 +78,24 @@ const Checkout = () => {
   const serviceableAddresses = useMemo(() => {
     if (!userProfile?.addresses?.length) return [];
     return userProfile.addresses.filter((addr) =>
-      isAddressServiceable(addr, activeUserStore, SERVICE_RADIUS_KM),
+      isAddressServiceable(addr, activeUserStore, SERVICE_RADIUS_KM)
     );
   }, [userProfile?.addresses, activeUserStore?.id, SERVICE_RADIUS_KM]);
 
   const nonServiceableAddresses = useMemo(() => {
     if (!userProfile?.addresses?.length) return [];
     return userProfile.addresses.filter((addr) =>
-      !isAddressServiceable(addr, activeUserStore, SERVICE_RADIUS_KM),
+      !isAddressServiceable(addr, activeUserStore, SERVICE_RADIUS_KM)
     );
   }, [userProfile?.addresses, activeUserStore?.id, SERVICE_RADIUS_KM]);
 
   // ── Auto-select first serviceable address on load / store change ─────────
   useEffect(() => {
     if (!serviceableAddresses.length) { setSelectedAddress(''); return; }
+    // Keep current selection if it's still serviceable
     const stillValid = serviceableAddresses.find((a) => a.id === selectedAddress);
     if (!stillValid) setSelectedAddress(serviceableAddresses[0].id);
-  }, [serviceableAddresses]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [serviceableAddresses]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!document.getElementById('zap-shake-style')) {
@@ -195,7 +196,6 @@ const Checkout = () => {
     }
   };
 
-  // ── Checkout handler ──────────────────────────────────────────────────────
   const handleCheckout = async () => {
     if (!address) {
       setError('Please add or select a delivery address to continue.');
@@ -207,9 +207,9 @@ const Checkout = () => {
       return;
     }
 
-    // ✅ COD ABUSE FIX: Prevent users from stacking more than 2 unpaid COD
-    // orders. This client-side check gives a clear error immediately. The
-    // Cloud Function also enforces this server-side so it can't be bypassed.
+    // ✅ COD ABUSE FIX: Block users with 2+ active unpaid COD orders.
+    // The Cloud Function enforces this server-side too — this check just gives
+    // the user a clear message before the order is even written to Firestore.
     if (paymentMethod === 'cod') {
       try {
         const activeCodSnap = await getDocs(
@@ -281,12 +281,13 @@ const Checkout = () => {
           <Typography variant="caption" color="text.secondary" display="block" mb={1.5} textAlign="center">
             Need help with your order?
           </Typography>
-          <Box sx={{ display: 'flex', gap: 1.5, justifyContent: 'center' }}>
-            <Button size="small" startIcon={<Phone />} variant="outlined" href="tel:+919999999999">
+          <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center' }}>
+            <Button size="small" variant="outlined" startIcon={<Phone />} component="a" href="tel:+919876543210">
               Call Us
             </Button>
-            <Button size="small" startIcon={<HeadsetMic />} variant="outlined" onClick={() => navigate('/support')}>
-              Support
+            <Button size="small" variant="outlined" startIcon={<HeadsetMic />}
+              component="a" href="https://wa.me/919876543210" target="_blank">
+              WhatsApp
             </Button>
           </Box>
         </Box>
@@ -294,26 +295,31 @@ const Checkout = () => {
     );
   }
 
-  // ── Empty cart guard ──────────────────────────────────────────────────────
-  if (!items.length) {
-    return (
-      <Container maxWidth="sm" sx={{ py: 8, textAlign: 'center' }}>
-        <Typography variant="h6" mb={2}>Your cart is empty</Typography>
-        <Button variant="contained" onClick={() => navigate('/')}>Browse Products</Button>
-      </Container>
-    );
-  }
-
-  // ── Main checkout UI ──────────────────────────────────────────────────────
   return (
-    <Box sx={{ minHeight: '100vh', background: ZAP_COLORS.background || '#F9F9F9', pb: 8 }}>
-      <Container maxWidth="md" sx={{ pt: 2 }}>
-        {/* Back button */}
-        <Box sx={{ mb: 2 }}>
-          <IconButton onClick={() => navigate('/cart')}>
-            <ArrowBack />
-          </IconButton>
+    <Box sx={{ pb: { xs: 13, md: 3 }, pt: 1 }}>
+      <Container maxWidth="lg">
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, px: { xs: 1, sm: 0 } }}>
+          <IconButton onClick={() => navigate(-1)} size="small"><ArrowBack /></IconButton>
+          <Typography variant="h6" fontWeight={700}>Checkout</Typography>
         </Box>
+
+        {/* Cart unavailable items warning */}
+        {hasUnavailable && (
+          <Alert
+            severity="warning" sx={{ mb: 2, borderRadius: 2 }}
+            action={
+              <Button size="small" color="warning" onClick={() => navigate('/cart')}>
+                Go to Cart
+              </Button>
+            }
+          >
+            <Typography variant="body2" fontWeight={700} mb={0.2}>Cart has unavailable items</Typography>
+            <Typography variant="caption">
+              {unavailableCartItems.map((i) => i.unit ? `${i.name} (${i.unit})` : i.name).join(', ')} not
+              available at <strong>{activeUserStore?.name}</strong>. Remove them to proceed.
+            </Typography>
+          </Alert>
+        )}
 
         {error && (
           <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }} onClose={() => setError('')}>
@@ -322,91 +328,146 @@ const Checkout = () => {
         )}
 
         <Box sx={{ display: 'flex', gap: 3, flexDirection: { xs: 'column', md: 'row' } }}>
-          {/* ── Left column: address + payment ─────────────────────────────── */}
+          {/* ── Left column ────────────────────────────────────────────────── */}
           <Box sx={{ flex: 1 }}>
-            {/* Address section */}
+
+            {/* ── Delivery Address ─────────────────────────────────────────── */}
             <Paper
               ref={addressRef}
               elevation={0}
               sx={{
-                border: `1.5px solid ${addressMissing && !address ? ZAP_COLORS.primary : ZAP_COLORS.border}`,
+                border: `1.5px solid ${addressMissing ? ZAP_COLORS.error || '#EF4444' : ZAP_COLORS.border}`,
                 borderRadius: 3, p: 2.5, mb: 2,
                 animation: addressShake ? 'zapShake 0.6s ease' : 'none',
               }}
             >
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
-                <Typography variant="subtitle1" fontWeight={700}>Delivery Address</Typography>
-                <Button
-                  size="small" startIcon={<Add />}
-                  onClick={() => navigate('/profile', { state: { openAddAddress: true } })}
-                  sx={{ color: ZAP_COLORS.primary }}
-                >
+                <Typography variant="subtitle1" fontWeight={700} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <LocationOn fontSize="small" sx={{ color: ZAP_COLORS.primary }} /> Delivery Address
+                </Typography>
+                <Button size="small" startIcon={<Add />} onClick={() => navigate('/add-address?from=checkout')}>
                   Add New
                 </Button>
               </Box>
 
-              {serviceableAddresses.length === 0 ? (
-                <Box sx={{ textAlign: 'center', py: 2 }}>
-                  <LocationOn sx={{ color: ZAP_COLORS.textMuted, fontSize: 36, mb: 1 }} />
-                  <Typography variant="body2" color="text.secondary" mb={1.5}>
-                    No saved addresses for this delivery area.
+              {/* Delivering from chip */}
+              {activeUserStore && (
+                <Box sx={{
+                  display: 'inline-flex', alignItems: 'center', gap: 0.6,
+                  px: 1.2, py: 0.4, borderRadius: 10, mb: 1.5,
+                  background: `${ZAP_COLORS.primary}10`,
+                  border: `1px solid ${ZAP_COLORS.primary}25`,
+                }}>
+                  <Box sx={{ width: 6, height: 6, borderRadius: '50%', background: ZAP_COLORS.primary, flexShrink: 0 }} />
+                  <Typography variant="caption" sx={{ color: ZAP_COLORS.primary, fontWeight: 600 }}>
+                    Delivering from {activeUserStore.name}
                   </Typography>
-                  <Button
-                    variant="contained" size="small" startIcon={<Add />}
-                    onClick={() => navigate('/profile', { state: { openAddAddress: true } })}
-                  >
+                </Box>
+              )}
+
+              {/* ── Case 1: No addresses at all ── */}
+              {!userProfile?.addresses?.length && (
+                <Box sx={{ textAlign: 'center', py: 2.5 }}>
+                  <Typography variant="body2" color="text.secondary" mb={1.5}>
+                    No saved addresses. Add one to continue.
+                  </Typography>
+                  <Button variant="outlined" size="small" startIcon={<Add />}
+                    onClick={() => navigate('/add-address?from=checkout')}>
                     Add Address
                   </Button>
                 </Box>
-              ) : (
-                <RadioGroup value={selectedAddress} onChange={(e) => setSelectedAddress(e.target.value)}>
-                  {serviceableAddresses.map((addr) => (
-                    <Paper
-                      key={addr.id}
-                      elevation={0}
-                      onClick={() => setSelectedAddress(addr.id)}
-                      sx={{
-                        border: `1.5px solid ${selectedAddress === addr.id ? ZAP_COLORS.primary : ZAP_COLORS.border}`,
-                        borderRadius: 2, p: 1.5, mb: 1, cursor: 'pointer',
-                        background: selectedAddress === addr.id ? `${ZAP_COLORS.primary}06` : 'transparent',
-                      }}
-                    >
-                      <FormControlLabel
-                        value={addr.id}
-                        control={<Radio size="small" />}
-                        label={
-                          <Box>
-                            <Typography variant="body2" fontWeight={600}>{addr.name}</Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {addr.line1}
-                              {addr.line2 ? `, ${addr.line2}` : ''}, {addr.city}
-                              {addr.state ? `, ${addr.state}` : ''} — {addr.pincode}
-                            </Typography>
-                          </Box>
-                        }
-                        sx={{ m: 0, width: '100%', alignItems: 'flex-start' }}
-                      />
-                    </Paper>
-                  ))}
+              )}
+
+              {/* ── Case 2: Addresses exist but none serviceable by active store ── */}
+              {userProfile?.addresses?.length > 0 && serviceableAddresses.length === 0 && (
+                <Box sx={{
+                  p: 2, borderRadius: 2, textAlign: 'center',
+                  background: `${ZAP_COLORS.warning || '#F59E0B'}08`,
+                  border: `1px solid ${ZAP_COLORS.warning || '#F59E0B'}30`,
+                }}>
+                  <Typography variant="body2" fontWeight={600} mb={0.5}>
+                    None of your saved addresses are in {activeUserStore?.name}'s delivery area
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
+                    Change your delivery location from the header 📍 to match one of your saved addresses, or add a new address within this store's area.
+                  </Typography>
+                  <Button variant="outlined" size="small" startIcon={<Add />}
+                    onClick={() => navigate('/add-address?from=checkout')}>
+                    Add New Address
+                  </Button>
+                </Box>
+              )}
+
+              {/* ── Case 3: Show serviceable addresses as selectable list ── */}
+              {serviceableAddresses.length > 0 && (
+                <RadioGroup
+                  value={selectedAddress}
+                  onChange={(e) => setSelectedAddress(e.target.value)}
+                >
+                  {serviceableAddresses.map((addr) => {
+                    const isSelected = selectedAddress === addr.id;
+                    const noCoords   = !addr.lat || !addr.lng;
+
+                    return (
+                      <Paper
+                        key={addr.id}
+                        elevation={0}
+                        onClick={() => setSelectedAddress(addr.id)}
+                        sx={{
+                          border: `1.5px solid ${isSelected ? ZAP_COLORS.primary : ZAP_COLORS.border}`,
+                          borderRadius: 2, p: 1.5, mb: 1, cursor: 'pointer',
+                          background: isSelected ? `${ZAP_COLORS.primary}06` : 'transparent',
+                          transition: 'all 0.15s',
+                          '&:hover': !isSelected ? { borderColor: `${ZAP_COLORS.primary}60` } : {},
+                        }}
+                      >
+                        <FormControlLabel
+                          value={addr.id}
+                          control={<Radio size="small" sx={{ color: ZAP_COLORS.primary }} />}
+                          label={
+                            <Box sx={{ width: '100%' }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                <Typography variant="body2" fontWeight={600}>
+                                  {addr.name} — {addr.phone}
+                                </Typography>
+                                {noCoords && (
+                                  <Chip
+                                    label="Location unverified"
+                                    size="small"
+                                    sx={{
+                                      fontSize: '0.62rem', height: 18,
+                                      background: `${ZAP_COLORS.warning || '#F59E0B'}15`,
+                                      color: ZAP_COLORS.warning || '#F59E0B',
+                                      border: `1px solid ${ZAP_COLORS.warning || '#F59E0B'}30`,
+                                    }}
+                                  />
+                                )}
+                              </Box>
+                              <Typography variant="caption" color="text.secondary">
+                                {addr.label && <><strong>{addr.label}</strong> · </>}
+                                {addr.line1}{addr.line2 ? `, ${addr.line2}` : ''}, {addr.city}
+                                {addr.state ? `, ${addr.state}` : ''} — {addr.pincode}
+                              </Typography>
+                            </Box>
+                          }
+                          sx={{ m: 0, width: '100%', alignItems: 'flex-start' }}
+                        />
+                      </Paper>
+                    );
+                  })}
                 </RadioGroup>
               )}
 
+              {/* Hint: some addresses filtered out */}
               {nonServiceableAddresses.length > 0 && serviceableAddresses.length > 0 && (
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
                   {nonServiceableAddresses.length} saved address{nonServiceableAddresses.length > 1 ? 'es are' : ' is'} in
                   a different delivery area and not shown. Change your store from the header 📍 to use them.
                 </Typography>
               )}
-
-              {nonServiceableAddresses.length > 0 && serviceableAddresses.length === 0 && activeUserStore && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                  💡 Tip: Your saved addresses are near a different store. Use the 📍 location chip in
-                  the header to switch stores and access them.
-                </Typography>
-              )}
             </Paper>
 
-            {/* Payment method */}
+            {/* ── Payment Method ─────────────────────────────────────────── */}
             <Paper elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3, p: 2.5 }}>
               <Typography variant="subtitle1" fontWeight={700} mb={1.5}>Payment Method</Typography>
               <RadioGroup value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
@@ -433,7 +494,7 @@ const Checkout = () => {
                     label={
                       <Box>
                         <Typography variant="body2" fontWeight={600}>Pay Online</Typography>
-                        <Typography variant="caption" color="text.secondary">UPI, Card, Net Banking via Razorpay</Typography>
+                        <Typography variant="caption" color="text.secondary">UPI, cards, netbanking via Razorpay</Typography>
                       </Box>
                     }
                     sx={{ m: 0 }} />
@@ -442,53 +503,47 @@ const Checkout = () => {
             </Paper>
           </Box>
 
-          {/* ── Right column: order summary ─────────────────────────────────── */}
-          <Box sx={{ width: { xs: '100%', md: 320 } }}>
-            <Paper elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3, p: 2.5, position: { md: 'sticky' }, top: { md: 80 } }}>
-              <Typography variant="subtitle1" fontWeight={700} mb={1.5}>Order Summary</Typography>
+          {/* ── Order Summary ──────────────────────────────────────────────── */}
+          <Box sx={{ width: { xs: '100%', md: 320 }, flexShrink: 0 }}>
+            <Paper elevation={0} sx={{
+              border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3, p: 2.5,
+              position: { md: 'sticky' }, top: { md: 80 },
+            }}>
+              <Typography variant="subtitle1" fontWeight={700} mb={2}>Order Summary</Typography>
 
-              {/* Cart items */}
-              <Box sx={{ mb: 2 }}>
-                {availableCartItems.map((item) => (
-                  <Box key={item.id} sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.75 }}>
-                    <Typography variant="body2" sx={{ flex: 1, pr: 1 }} noWrap>
-                      {item.name} {item.unit ? `(${item.unit})` : ''} × {item.quantity}
+              {availableCartItems.map((item) => (
+                <Box key={item.id} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                  <Box sx={{ flex: 1, pr: 1 }}>
+                    <Typography variant="body2" color="text.secondary" noWrap>
+                      {item.name} × {item.quantity}
                     </Typography>
-                    <Typography variant="body2" fontWeight={600}>
-                      ₹{((item.discountedPrice || item.mrp) * item.quantity).toFixed(0)}
-                    </Typography>
+                    {item.unit && (
+                      <Typography variant="caption" color="text.secondary" sx={{ opacity: 0.7 }}>
+                        {item.unit}
+                      </Typography>
+                    )}
                   </Box>
-                ))}
-              </Box>
+                  <Typography variant="body2" fontWeight={500}>₹{item.mrp * item.quantity}</Typography>
+                </Box>
+              ))}
 
               <Divider sx={{ my: 1.5 }} />
 
-              {/* Unavailable warning */}
-              {hasUnavailable && (
-                <Alert severity="warning" sx={{ mb: 1.5, borderRadius: 2, fontSize: '0.75rem', py: 0.5 }}>
-                  {unavailableCartItems.length} item{unavailableCartItems.length > 1 ? 's are' : ' is'} unavailable.
-                  Go back to Cart to remove them.
-                </Alert>
-              )}
-
-              {/* Price breakdown */}
               {(() => {
-                const savedAmount = availableCartItems.reduce((sum, i) => {
-                  if (i.discountedPrice && i.mrp > i.discountedPrice) {
-                    return sum + (i.mrp - i.discountedPrice) * i.quantity;
-                  }
-                  return sum;
-                }, 0);
+                const mrpTotal    = availableCartItems.reduce((s, i) => s + i.mrp * i.quantity, 0);
+                const savedAmount = availableCartItems.reduce(
+                  (s, i) => s + ((i.mrp - (i.discountedPrice || i.mrp)) * i.quantity), 0
+                );
                 return (
                   <>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                      <Typography variant="body2" color="text.secondary">Subtotal</Typography>
-                      <Typography variant="body2" fontWeight={500}>₹{subtotal.toFixed(0)}</Typography>
+                      <Typography variant="body2" color="text.secondary">MRP Total</Typography>
+                      <Typography variant="body2" fontWeight={500}>₹{mrpTotal}</Typography>
                     </Box>
                     {savedAmount > 0 && (
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                         <Typography variant="body2" color="text.secondary">Product Savings</Typography>
-                        <Typography variant="body2" fontWeight={600} color="success.main">-₹{savedAmount.toFixed(0)}</Typography>
+                        <Typography variant="body2" fontWeight={600} color="success.main">-₹{savedAmount}</Typography>
                       </Box>
                     )}
                     {coupon && discount > 0 && (
@@ -497,7 +552,7 @@ const Checkout = () => {
                           <Typography variant="body2" color="text.secondary">Coupon</Typography>
                           <Chip label={coupon.code} size="small" color="success" sx={{ fontSize: '0.7rem', height: 20 }} />
                         </Box>
-                        <Typography variant="body2" fontWeight={600} color="success.main">-₹{discount.toFixed(0)}</Typography>
+                        <Typography variant="body2" fontWeight={600} color="success.main">-₹{discount}</Typography>
                       </Box>
                     )}
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
@@ -523,7 +578,7 @@ const Checkout = () => {
               >
                 {loading
                   ? <CircularProgress size={22} sx={{ color: '#fff' }} />
-                  : paymentMethod === 'cod' ? 'Place Order' : `Pay ₹${total.toFixed(0)}`}
+                  : paymentMethod === 'cod' ? 'Place Order' : `Pay ₹${total}`}
               </Button>
 
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 1.5 }}>
