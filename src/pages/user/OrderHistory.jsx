@@ -116,6 +116,7 @@ import {
 } from '@mui/material';
 import {
   ExpandMore, Download, Cancel, Phone, ArrowBack,
+  HeadsetMic,
 } from '@mui/icons-material';
 import {
   collection, query, where, orderBy, getDocs, doc, updateDoc,
@@ -534,24 +535,46 @@ const OrderHistory = () => {
         ) : (
           <>
             {orders.map((order) => (
-              <OrderCard
-                key={order.id}
-                order={order}
-                userProfile={userProfile}
-                expanded={expandedId === order.id}
-                onChange={(_, isExpanded) => setExpandedId(isExpanded ? order.id : false)}
-                onCancelled={() => fetchOrders(page, statusFilter)}
-              />
+              <Box key={order.id} id={`order-${order.id}`}>
+                <OrderCard
+                  order={order}
+                  userProfile={userProfile}
+                  expanded={expandedId === order.id}
+                  onChange={(_, isOpen) => setExpandedId(isOpen ? order.id : false)}
+                  onCancelled={() => fetchOrders(0, statusFilter)}
+                />
+              </Box>
             ))}
 
+            <Box sx={{ mt: 2, p: 2, borderRadius: 2.5, background: `${ZAP_COLORS.primary}08`,
+              border: `1px solid ${ZAP_COLORS.primary}20`, display: 'flex', alignItems: 'center',
+              justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
+              <Typography variant="body2" fontWeight={600}>Need help with an order?</Typography>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button size="small" variant="outlined" component="a" href="tel:+919876543210"
+                  startIcon={<Phone />} sx={{ borderRadius: 10, fontSize: '0.75rem' }}>
+                  Call Us
+                </Button>
+                <Button size="small" variant="outlined" startIcon={<HeadsetMic />}
+                  onClick={() => navigate('/help')} sx={{ borderRadius: 10, fontSize: '0.75rem' }}>
+                  Help Center
+                </Button>
+              </Box>
+            </Box>
+
             {totalPages > 1 && (
-              <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
-                <Pagination
-                  count={totalPages}
-                  page={page + 1}
-                  onChange={(_, p) => fetchOrders(p - 1, statusFilter)}
-                  color="primary"
-                />
+              <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1, mt: 3 }}>
+                <Button size="small" variant="outlined" disabled={page === 0}
+                  onClick={() => fetchOrders(page - 1, statusFilter)}>
+                  Previous
+                </Button>
+                <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', px: 1 }}>
+                  Page {page + 1} of {totalPages}
+                </Typography>
+                <Button size="small" variant="outlined" disabled={page >= totalPages - 1}
+                  onClick={() => fetchOrders(page + 1, statusFilter)}>
+                  Next
+                </Button>
               </Box>
             )}
           </>
