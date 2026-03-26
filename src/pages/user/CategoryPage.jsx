@@ -1,3 +1,10 @@
+// ============================================================
+// src/pages/user/CategoryPage.jsx
+//
+// UPDATED: Queries STORE_INVENTORY instead of PRODUCTS.
+// sellRate → discountedPrice for backward compat with ProductCard.
+// Price sort uses sellRate field instead of discountedPrice.
+// ============================================================
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -16,6 +23,29 @@ import { useStore } from '../../context/StoreContext';
 import { ZAP_COLORS } from '../../theme';
 
 const PAGE_SIZE = 12;
+
+// ── Map storeInventory doc → ProductCard shape ───────────────────────────────
+const mapSI = (d) => {
+  const data = d.data();
+  return {
+    id:              data.productId || d.id,
+    productId:       data.productId || d.id,
+    storeId:         data.storeId,
+    name:            data.name || '',
+    unit:            data.unit || '',
+    categoryId:      data.categoryId || '',
+    description:     data.description || '',
+    images:          data.images || [],
+    mrp:             data.mrp || 0,
+    discountedPrice: data.sellRate || null,
+    stock:           data.stock || 0,
+    isFeatured:      data.isFeatured || false,
+    isExclusive:     data.isExclusive || false,
+    isNewArrival:    data.isNewArrival || false,
+    active:          data.active !== false,
+    createdAt:       data.createdAt,
+  };
+};
 
 const CategoryPage = () => {
   const { id } = useParams();
@@ -48,7 +78,8 @@ const CategoryPage = () => {
   const fetchProducts = useCallback(async (pageIndex = 0) => {
     setLoading(true);
     try {
-      const col = collection(db, COLLECTIONS.PRODUCTS);
+      // ── Query STORE_INVENTORY instead of PRODUCTS ──────────────────────
+      const col = collection(db, COLLECTIONS.STORE_INVENTORY);
       const constraints = [where('active', '==', true)];
 
       if (activeUserStore?.id) constraints.push(where('storeId', '==', activeUserStore.id));
@@ -58,13 +89,12 @@ const CategoryPage = () => {
       if (filterParam === 'new')       constraints.push(where('isNewArrival', '==', true));
 
       switch (sortBy) {
-        case 'price_asc':  constraints.push(orderBy('discountedPrice', 'asc'));  break;
-        case 'price_desc': constraints.push(orderBy('discountedPrice', 'desc')); break;
+        case 'price_asc':  constraints.push(orderBy('sellRate', 'asc'));  break;
+        case 'price_desc': constraints.push(orderBy('sellRate', 'desc')); break;
         default:           constraints.push(orderBy('createdAt', 'desc'));
       }
 
       // For search: fetch broader set then filter client-side
-      // (Firestore has no native full-text search; prefix range + name filtering)
       const fetchLimit = searchQuery ? PAGE_SIZE * 8 : PAGE_SIZE;
 
       const countQ = searchQuery
@@ -78,9 +108,9 @@ const CategoryPage = () => {
         : query(col, ...constraints, limit(fetchLimit));
 
       const snap = await getDocs(q);
-      let docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      let docs = snap.docs.map(mapSI);
 
-      // Client-side filtering by search term (handles partial words, not just prefix)
+      // Client-side search filter
       if (searchQuery) {
         const lower = searchQuery.toLowerCase();
         docs = docs.filter((p) =>
@@ -88,7 +118,7 @@ const CategoryPage = () => {
           p.description?.toLowerCase().includes(lower) ||
           p.unit?.toLowerCase().includes(lower)
         );
-        setTotalPages(1); // search results fit on one page
+        setTotalPages(1);
       } else {
         setTotalPages(Math.ceil(countSnap.data().count / PAGE_SIZE));
         setPage(pageIndex);
@@ -105,14 +135,14 @@ const CategoryPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [id, filterParam, sortBy, activeUserStore?.id, searchQuery]);
+  }, [id, filterParam, sortBy, activeUserStore?.id, searchQuery, cursors]);
 
   useEffect(() => {
     setCursors([null]);
     fetchProducts(0);
   }, [id, filterParam, sortBy, activeUserStore?.id, searchQuery]);
 
-  // Client-side price + discount filter (applied after fetch)
+  // Client-side price + discount filter
   const filteredProducts = products.filter((p) => {
     const price = p.discountedPrice || p.mrp;
     if (price < priceRange[0] || price > priceRange[1]) return false;
@@ -175,62 +205,58 @@ const CategoryPage = () => {
                   <Box sx={{ fontSize: '4rem', mb: 2 }}>🔍</Box>
                   <Typography variant="h6" fontWeight={600}>No products found</Typography>
                   <Typography color="text.secondary">
-                    {searchQuery ? `We couldn't find anything for "${searchQuery}"` : 'Try adjusting your filters'}
+                    {searchQuery ? 'Try a different search term' : 'Check back later for new products'}
                   </Typography>
-                  {searchQuery && (
-                    <Button variant="outlined" onClick={() => navigate('/')} sx={{ mt: 2 }}>
-                      Back to Home
-                    </Button>
-                  )}
                 </Box>
               </Grid>
             )
             : filteredProducts.map((p) => (
-              <Grid item xs={6} sm={4} md={3} key={p.id}>
-                <ProductCard product={p} />
-              </Grid>
+              <Grid item xs={6} sm={4} md={3} key={p.id}><ProductCard product={p} /></Grid>
             ))
           }
         </Grid>
 
-        {/* Pagination (not shown for search results) */}
-        {!loading && !searchQuery && totalPages > 1 && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1, mt: 4, flexWrap: 'wrap' }}>
-            <Button size="small" variant="outlined" disabled={page === 0} onClick={() => fetchProducts(page - 1)}>← Prev</Button>
-            {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-              const pageNum = Math.max(0, Math.min(page - 3, totalPages - 7)) + i;
-              return (
-                <Button key={pageNum} size="small" variant={pageNum === page ? 'contained' : 'outlined'} onClick={() => fetchProducts(pageNum)} sx={{ minWidth: 36 }}>
-                  {pageNum + 1}
-                </Button>
-              );
-            })}
-            <Button size="small" variant="outlined" disabled={page >= totalPages - 1} onClick={() => fetchProducts(page + 1)}>Next →</Button>
+        {/* Pagination */}
+        {!searchQuery && totalPages > 1 && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1, mt: 4, alignItems: 'center' }}>
+            <Button variant="outlined" size="small" disabled={page === 0} onClick={() => fetchProducts(page - 1)}>← Prev</Button>
+            <Typography variant="body2">{page + 1} / {totalPages}</Typography>
+            <Button variant="outlined" size="small" disabled={page >= totalPages - 1} onClick={() => fetchProducts(page + 1)}>Next →</Button>
           </Box>
         )}
-      </Container>
 
-      {/* Filter Drawer */}
-      <Drawer anchor="right" open={filterDrawer} onClose={() => setFilterDrawer(false)} PaperProps={{ sx: { width: 280, p: 3 } }}>
-        <Typography variant="h6" fontWeight={700} mb={3}>Filters</Typography>
-        <Typography variant="subtitle2" fontWeight={600} mb={1}>Price Range</Typography>
-        <Slider value={priceRange} onChange={(_, v) => setPriceRange(v)} min={0} max={2000} step={10}
-          valueLabelDisplay="auto" valueLabelFormat={(v) => `₹${v}`} sx={{ color: ZAP_COLORS.primary }} />
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-          <Typography variant="caption">₹{priceRange[0]}</Typography>
-          <Typography variant="caption">₹{priceRange[1]}</Typography>
-        </Box>
-        <FormGroup>
-          <FormControlLabel
-            control={<Checkbox checked={onlyDiscount} onChange={(e) => setOnlyDiscount(e.target.checked)} sx={{ '&.Mui-checked': { color: ZAP_COLORS.primary } }} />}
-            label={<Typography variant="body2">Discounted items only</Typography>}
+        {/* Filter Drawer */}
+        <Drawer anchor="right" open={filterDrawer} onClose={() => setFilterDrawer(false)}
+          PaperProps={{ sx: { width: 280, p: 3, borderRadius: '16px 0 0 16px' } }}>
+          <Typography variant="h6" fontWeight={700} mb={3}>Filters</Typography>
+
+          <Typography variant="subtitle2" fontWeight={600} mb={1}>Price Range</Typography>
+          <Slider
+            value={priceRange} onChange={(_, v) => setPriceRange(v)}
+            min={0} max={2000} step={10}
+            valueLabelDisplay="auto" valueLabelFormat={(v) => `₹${v}`}
+            sx={{ color: ZAP_COLORS.primary }}
           />
-        </FormGroup>
-        <Box sx={{ display: 'flex', gap: 1.5, mt: 3 }}>
-          <Button fullWidth variant="outlined" onClick={() => { setPriceRange([0, 2000]); setOnlyDiscount(false); setFilterDrawer(false); }}>Clear</Button>
-          <Button fullWidth variant="contained" onClick={() => setFilterDrawer(false)}>Apply</Button>
-        </Box>
-      </Drawer>
+          <Typography variant="caption" color="text.secondary" mb={3} display="block">
+            ₹{priceRange[0]} — ₹{priceRange[1]}
+          </Typography>
+
+          <FormGroup>
+            <FormControlLabel
+              control={<Checkbox checked={onlyDiscount} onChange={(e) => setOnlyDiscount(e.target.checked)} />}
+              label={<Typography variant="body2">Only discounted</Typography>}
+            />
+          </FormGroup>
+
+          <Box sx={{ mt: 4, display: 'flex', gap: 1 }}>
+            <Button variant="outlined" fullWidth onClick={() => { setPriceRange([0, 2000]); setOnlyDiscount(false); }}>
+              Reset
+            </Button>
+            <Button variant="contained" fullWidth onClick={() => setFilterDrawer(false)}>Apply</Button>
+          </Box>
+        </Drawer>
+
+      </Container>
     </Box>
   );
 };

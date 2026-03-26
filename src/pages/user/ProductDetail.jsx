@@ -1,21 +1,54 @@
+// ============================================================
+// src/pages/user/ProductDetail.jsx
+//
+// UPDATED: Fetches product from storeInventory (has pricing/stock)
+// with fallback to global products catalog.
+// Related products also fetched from storeInventory.
+// FIX: Added "Go to Cart" button when item is in cart.
+// FIX: Related products increased to 8, page enriched with info strip.
+// ============================================================
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box, Container, Typography, Button, Chip, Skeleton,
   IconButton, Divider, Grid, Alert,
 } from '@mui/material';
-import { Add, Remove, ArrowBack } from '@mui/icons-material';
+import { Add, Remove, ArrowBack, ShoppingCart } from '@mui/icons-material';
 import { doc, getDoc, collection, query, where, limit, getDocs } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
+import { useStore } from '../../context/StoreContext';
 import ProductCard from '../../components/user/ProductCard';
 import { ZAP_COLORS } from '../../theme';
+
+// ── Map storeInventory doc → product shape ───────────────────────────────────
+const mapSIDoc = (d) => {
+  const data = d.data();
+  return {
+    id:              data.productId || d.id,
+    productId:       data.productId || d.id,
+    storeId:         data.storeId,
+    name:            data.name || '',
+    unit:            data.unit || '',
+    categoryId:      data.categoryId || '',
+    description:     data.description || '',
+    images:          data.images || [],
+    mrp:             data.mrp || 0,
+    discountedPrice: data.sellRate || null,
+    stock:           data.stock || 0,
+    isFeatured:      data.isFeatured || false,
+    isExclusive:     data.isExclusive || false,
+    isNewArrival:    data.isNewArrival || false,
+    active:          data.active !== false,
+  };
+};
 
 const ProductDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { activeUserStore } = useStore();
   const { addToCart, updateQuantity, removeFromCart, isInCart, getQuantity } = useCart();
   const [product, setProduct] = useState(null);
   const [related, setRelated] = useState([]);
@@ -26,28 +59,58 @@ const ProductDetail = () => {
   const qty = product ? getQuantity(product.id) : 0;
 
   useEffect(() => {
-    const fetch = async () => {
+    const fetchProduct = async () => {
       setLoading(true);
       try {
-        const snap = await getDoc(doc(db, COLLECTIONS.PRODUCTS, id));
-        if (snap.exists()) {
-          const data = { id: snap.id, ...snap.data() };
+        let data = null;
+        const storeId = activeUserStore?.id;
+
+        // ── Try storeInventory first (has pricing & stock for this store) ──
+        if (storeId) {
+          const siDocId = `${storeId}__${id}`;
+          const siSnap = await getDoc(doc(db, COLLECTIONS.STORE_INVENTORY, siDocId));
+          if (siSnap.exists()) {
+            data = mapSIDoc(siSnap);
+          }
+        }
+
+        // ── Fallback: global product catalog (no pricing/stock) ──
+        if (!data) {
+          const snap = await getDoc(doc(db, COLLECTIONS.PRODUCTS, id));
+          if (snap.exists()) {
+            const raw = snap.data();
+            data = {
+              id: snap.id,
+              ...raw,
+              mrp: raw.mrp || 0,
+              discountedPrice: raw.discountedPrice || null,
+              stock: 0, // global catalog has no stock
+            };
+          }
+        }
+
+        if (data) {
           setProduct(data);
-          // Fetch related
-          const relSnap = await getDocs(
-            query(collection(db, COLLECTIONS.PRODUCTS),
-              where('categoryId', '==', data.categoryId),
-              where('active', '==', true),
-              limit(5))
-          );
-          setRelated(relSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((p) => p.id !== id));
+          // ── Fetch up to 9 related from storeInventory (we'll filter self, show 8) ──
+          if (storeId && data.categoryId) {
+            const relSnap = await getDocs(
+              query(
+                collection(db, COLLECTIONS.STORE_INVENTORY),
+                where('storeId', '==', storeId),
+                where('categoryId', '==', data.categoryId),
+                where('active', '==', true),
+                limit(9)
+              )
+            );
+            setRelated(relSnap.docs.map(mapSIDoc).filter((p) => p.id !== id));
+          }
         }
       } finally {
         setLoading(false);
       }
     };
-    fetch();
-  }, [id]);
+    fetchProduct();
+  }, [id, activeUserStore?.id]);
 
   const discount = product?.mrp && product?.discountedPrice
     ? Math.round(((product.mrp - product.discountedPrice) / product.mrp) * 100) : 0;
@@ -92,7 +155,6 @@ const ProductDetail = () => {
         <Grid container spacing={{ xs: 2, md: 4 }}>
           {/* Images */}
           <Grid item xs={12} md={5}>
-            {/* Main image */}
             <Box sx={{
               borderRadius: 3, overflow: 'hidden',
               border: `1px solid ${ZAP_COLORS.border}`,
@@ -110,80 +172,67 @@ const ProductDetail = () => {
                   {discount}% OFF
                 </Box>
               )}
-              <Box
-                component="img"
-                src={images[selectedImage]}
-                alt={product.name}
-                sx={{ width: '85%', height: '85%', objectFit: 'contain' }}
-              />
+              <Box component="img" src={images[selectedImage]} alt={product.name}
+                sx={{ width: '100%', height: '100%', objectFit: 'contain', p: 2 }} />
             </Box>
 
-            {/* Thumbnail row */}
+            {/* Thumbnails */}
             {images.length > 1 && (
-              <Box sx={{ display: 'flex', gap: 1, mt: 1.5, overflowX: 'auto' }}>
+              <Box sx={{ display: 'flex', gap: 1, mt: 1.5, overflowX: 'auto', pb: 0.5 }}>
                 {images.map((img, i) => (
-                  <Box
-                    key={i}
-                    component="img"
-                    src={img}
-                    alt=""
-                    onClick={() => setSelectedImage(i)}
+                  <Box key={i} onClick={() => setSelectedImage(i)}
                     sx={{
-                      width: 60, height: 60, borderRadius: 2, objectFit: 'cover',
-                      cursor: 'pointer', flexShrink: 0,
-                      border: `2px solid ${selectedImage === i ? ZAP_COLORS.primary : ZAP_COLORS.border}`,
-                      background: `${ZAP_COLORS.primary}06`,
-                      transition: 'border-color 0.2s',
-                    }}
-                  />
+                      width: 56, height: 56, borderRadius: 2, overflow: 'hidden', flexShrink: 0,
+                      border: `2px solid ${i === selectedImage ? ZAP_COLORS.primary : ZAP_COLORS.border}`,
+                      cursor: 'pointer', opacity: i === selectedImage ? 1 : 0.6,
+                      transition: 'all 0.2s',
+                    }}>
+                    <Box component="img" src={img} alt="" sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </Box>
                 ))}
               </Box>
             )}
           </Grid>
 
-          {/* Info */}
+          {/* Details */}
           <Grid item xs={12} md={7}>
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
-              {product.isExclusive && <Chip label="EXCLUSIVE" size="small" sx={{ background: `${ZAP_COLORS.accent}20`, color: '#B45309', fontWeight: 700, fontSize: '0.68rem' }} />}
-              {product.isNewArrival && <Chip label="NEW ARRIVAL" size="small" color="success" sx={{ fontWeight: 700, fontSize: '0.68rem' }} />}
-              {product.isFeatured && <Chip label="FEATURED" size="small" color="primary" sx={{ fontWeight: 700, fontSize: '0.68rem' }} />}
+            <Box sx={{ display: 'flex', gap: 0.8, mb: 1, flexWrap: 'wrap' }}>
+              {product.isFeatured && <Chip label="⭐ Featured" size="small" sx={{ fontWeight: 600, fontSize: '0.7rem' }} />}
+              {product.isExclusive && <Chip label="💛 Exclusive" size="small" sx={{ fontWeight: 600, fontSize: '0.7rem' }} />}
+              {product.isNewArrival && <Chip label="🆕 New" size="small" sx={{ fontWeight: 600, fontSize: '0.7rem' }} />}
             </Box>
 
-            <Typography variant="h5" fontWeight={700} sx={{ fontFamily: "'Syne', sans-serif", lineHeight: 1.3, mb: 0.5 }}>
+            <Typography variant="h5" fontWeight={800} sx={{ fontFamily: "'Syne', sans-serif", mb: 0.5 }}>
               {product.name}
             </Typography>
-
             {product.unit && (
-              <Typography variant="body2" color="text.secondary" mb={1}>{product.unit}</Typography>
+              <Typography variant="body2" color="text.secondary" mb={2}>{product.unit}</Typography>
             )}
 
             {/* Price */}
             <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5, mb: 2 }}>
-              <Typography sx={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: '2rem', color: ZAP_COLORS.textPrimary }}>
+              <Typography variant="h4" fontWeight={800} color="primary">
                 ₹{product.discountedPrice || product.mrp}
               </Typography>
               {product.discountedPrice && product.mrp > product.discountedPrice && (
                 <>
-                  <Typography sx={{ textDecoration: 'line-through', color: ZAP_COLORS.textMuted, fontSize: '1.1rem' }}>
+                  <Typography variant="h6" sx={{ textDecoration: 'line-through', color: 'text.secondary' }}>
                     ₹{product.mrp}
                   </Typography>
-                  <Chip
-                    label={`${discount}% off`}
-                    size="small"
-                    sx={{ background: `${ZAP_COLORS.primary}15`, color: ZAP_COLORS.primary, fontWeight: 700 }}
-                  />
+                  <Chip label={`Save ₹${product.mrp - product.discountedPrice}`} size="small"
+                    sx={{ background: `${ZAP_COLORS.accentGreen}20`, color: ZAP_COLORS.accentGreen, fontWeight: 700 }} />
                 </>
               )}
             </Box>
 
-            {/* Stock */}
+            {/* Stock status */}
             {product.stock <= 0 ? (
               <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>Out of Stock</Alert>
             ) : product.stock <= 5 ? (
               <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }}>Only {product.stock} left in stock!</Alert>
             ) : null}
 
-            {/* Add to cart */}
+            {/* Add to cart / Qty controls */}
             <Box sx={{ mb: 3 }}>
               {!inCart ? (
                 <Box
@@ -208,64 +257,99 @@ const ProductDetail = () => {
                   {product.stock <= 0 ? 'Out of Stock' : 'Add to Cart'}
                 </Box>
               ) : (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                /* ── FIX: Qty row + "Go to Cart" button side by side ── */
+                <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+                  {/* Qty stepper */}
                   <Box sx={{
-                    display: 'flex', alignItems: 'center', flex: 1,
-                    background: `linear-gradient(135deg, ${ZAP_COLORS.primary} 0%, ${ZAP_COLORS.primaryDark} 100%)`,
-                    borderRadius: 3, overflow: 'hidden', boxShadow: `0 4px 14px ${ZAP_COLORS.primary}40`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    border: `2px solid ${ZAP_COLORS.primary}`, borderRadius: 3, overflow: 'hidden',
+                    flex: '0 0 auto',
                   }}>
-                    <IconButton onClick={() => { if (qty <= 1) removeFromCart(product.id); else updateQuantity(product.id, qty - 1); }} sx={{ color: '#fff', p: 1.3, '&:hover': { background: 'rgba(0,0,0,0.15)' } }}>
+                    <IconButton
+                      onClick={() => qty <= 1 ? removeFromCart(product.id) : updateQuantity(product.id, qty - 1)}
+                      sx={{ borderRadius: 0, py: 1.5, px: 2.5 }}
+                    >
                       <Remove />
                     </IconButton>
-                    <Typography sx={{ color: '#fff', fontWeight: 800, flex: 1, textAlign: 'center', fontSize: '1.1rem', fontFamily: "'Syne', sans-serif" }}>
+                    <Typography fontWeight={800} fontSize="1.2rem" sx={{ px: 2.5, minWidth: 40, textAlign: 'center' }}>
                       {qty}
                     </Typography>
-                    <IconButton onClick={() => updateQuantity(product.id, qty + 1)} sx={{ color: '#fff', p: 1.3, '&:hover': { background: 'rgba(0,0,0,0.15)' } }}>
+                    <IconButton
+                      onClick={() => updateQuantity(product.id, qty + 1)}
+                      sx={{ borderRadius: 0, py: 1.5, px: 2.5 }}
+                    >
                       <Add />
                     </IconButton>
                   </Box>
-                  <Button variant="contained" size="large" onClick={() => navigate('/cart')} sx={{ borderRadius: 3, px: 3 }}>
+
+                  {/* Go to Cart */}
+                  <Box
+                    onClick={() => navigate('/cart')}
+                    sx={{
+                      flex: 1,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1,
+                      py: 1.7, borderRadius: 3, cursor: 'pointer',
+                      background: `linear-gradient(135deg, ${ZAP_COLORS.primary} 0%, ${ZAP_COLORS.primaryDark} 100%)`,
+                      color: '#fff',
+                      fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: '1rem', letterSpacing: '0.04em',
+                      boxShadow: `0 6px 20px ${ZAP_COLORS.primary}45`,
+                      transition: 'all 0.2s cubic-bezier(0.34,1.56,0.64,1)',
+                      '&:hover': { transform: 'scale(1.015)', boxShadow: `0 8px 24px ${ZAP_COLORS.primary}55` },
+                      '&:active': { transform: 'scale(0.97)' },
+                    }}
+                  >
+                    <ShoppingCart sx={{ fontSize: 20 }} />
                     Go to Cart
-                  </Button>
+                  </Box>
                 </Box>
               )}
             </Box>
 
-            <Divider sx={{ mb: 2 }} />
-
             {/* Description */}
             {product.description && (
-              <Box mb={2}>
-                <Typography variant="subtitle2" fontWeight={700} mb={0.5}>About this product</Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
-                  {product.description}
-                </Typography>
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="subtitle2" fontWeight={700} mb={0.5}>Description</Typography>
+                <Typography variant="body2" color="text.secondary">{product.description}</Typography>
               </Box>
             )}
 
-            {/* Delivery info */}
-            <Box sx={{
-              p: 2, borderRadius: 2,
-              background: `${ZAP_COLORS.primary}08`,
-              border: `1px solid ${ZAP_COLORS.primary}20`,
-            }}>
-              <Typography variant="body2" fontWeight={600} mb={0.5}>🛵 Delivery Info</Typography>
-              <Typography variant="caption" color="text.secondary">
-                Delivery charge: ₹{process.env.REACT_APP_DELIVERY_CHARGE || 10} per order.
-                Free delivery on orders above ₹{process.env.REACT_APP_FREE_DELIVERY_ABOVE || 299}.
-              </Typography>
-            </Box>
+            <Divider sx={{ mb: 2 }} />
+
+            {/* Delivery & service highlights */}
+            <Grid container spacing={1.5}>
+              {[
+                { icon: '🛵', title: 'Free Delivery', sub: `On orders above ₹${process.env.REACT_APP_FREE_DELIVERY_ABOVE || 299}` },
+                { icon: '⚡', title: 'Express Delivery', sub: 'Delivered in minutes' },
+                { icon: '↩️', title: 'Easy Returns', sub: 'Hassle-free returns' },
+                { icon: '✅', title: 'Quality Assured', sub: 'Fresh & genuine products' },
+              ].map((item) => (
+                <Grid item xs={6} key={item.title}>
+                  <Box sx={{
+                    display: 'flex', alignItems: 'flex-start', gap: 1,
+                    p: 1.2, borderRadius: 2,
+                    background: `${ZAP_COLORS.primary}06`,
+                    border: `1px solid ${ZAP_COLORS.border}`,
+                  }}>
+                    <Typography fontSize="1.2rem" lineHeight={1}>{item.icon}</Typography>
+                    <Box>
+                      <Typography variant="caption" fontWeight={700} display="block" lineHeight={1.2}>{item.title}</Typography>
+                      <Typography variant="caption" color="text.secondary" lineHeight={1.3}>{item.sub}</Typography>
+                    </Box>
+                  </Box>
+                </Grid>
+              ))}
+            </Grid>
           </Grid>
         </Grid>
 
-        {/* Related products */}
+        {/* Related products — show up to 8 */}
         {related.length > 0 && (
           <Box sx={{ mt: 5 }}>
             <Typography variant="h6" fontWeight={700} mb={2} sx={{ fontFamily: "'Syne', sans-serif" }}>
               You may also like
             </Typography>
             <Grid container spacing={{ xs: 1.5, sm: 2 }}>
-              {related.slice(0, 4).map((p) => (
+              {related.slice(0, 8).map((p) => (
                 <Grid item xs={6} sm={4} md={3} key={p.id}>
                   <ProductCard product={p} />
                 </Grid>

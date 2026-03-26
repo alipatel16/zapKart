@@ -21,7 +21,7 @@ pnpm-debug.log*
 .env.test
 
 # Firebase
-.firebaserc
+# .firebaserc
 .firebase/
 firebase-debug.log
 firebase-debug.*.log

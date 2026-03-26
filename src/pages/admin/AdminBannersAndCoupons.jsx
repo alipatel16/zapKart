@@ -149,7 +149,17 @@ export const AdminBanners = () => {
 // ============================================================
 // ADMIN COUPONS
 // ============================================================
-const EMPTY_COUPON = { code: '', type: 'percent', value: '', maxDiscount: '', minOrder: '', active: true, expiresAt: '' };
+const EMPTY_COUPON = {
+  code: '',
+  type: 'percent',
+  value: '',
+  maxDiscount: '',
+  minOrder: '',
+  maxUsesPerUser: 1,
+  maxTotalUses: '',
+  active: true,
+  expiresAt: '',
+};
 
 export const AdminCoupons = () => {
   const [coupons, setCoupons] = useState([]);
@@ -174,18 +184,25 @@ export const AdminCoupons = () => {
     try {
       const data = {
         ...form,
-        code: form.code.toUpperCase(),
-        value: parseFloat(form.value),
-        maxDiscount: form.maxDiscount ? parseFloat(form.maxDiscount) : null,
-        minOrder: form.minOrder ? parseFloat(form.minOrder) : 0,
+        code:           form.code.toUpperCase(),
+        value:          parseFloat(form.value),
+        maxDiscount:    form.maxDiscount    ? parseFloat(form.maxDiscount)    : null,
+        minOrder:       form.minOrder       ? parseFloat(form.minOrder)       : 0,
+        maxUsesPerUser: form.maxUsesPerUser ? parseInt(form.maxUsesPerUser)   : 1,
+        maxTotalUses:   form.maxTotalUses   ? parseInt(form.maxTotalUses)     : null, // null = unlimited
         updatedAt: serverTimestamp(),
       };
       if (editItem) {
         await updateDoc(doc(db, COLLECTIONS.COUPONS, editItem.id), data);
       } else {
-        await addDoc(collection(db, COLLECTIONS.COUPONS), { ...data, createdAt: serverTimestamp() });
+        await addDoc(collection(db, COLLECTIONS.COUPONS), {
+          ...data,
+          totalUsageCount: 0,       // initialise counter on creation
+          createdAt: serverTimestamp(),
+        });
       }
-      setDialog(false); fetch();
+      setDialog(false);
+      fetch();
       setSuccess(editItem ? 'Coupon updated!' : 'Coupon added!');
       setTimeout(() => setSuccess(''), 3000);
     } finally { setSaving(false); }
@@ -205,40 +222,78 @@ export const AdminCoupons = () => {
         <Table size="small">
           <TableHead>
             <TableRow sx={{ background: `${ZAP_COLORS.primary}08` }}>
-              {['Code', 'Type', 'Value', 'Max Discount', 'Min Order', 'Active', 'Actions'].map((h) => (
+              {['Code', 'Type', 'Value', 'Min Order', 'Uses / Limit', 'Per User', 'Active', 'Actions'].map((h) => (
                 <TableCell key={h} sx={{ fontWeight: 700, fontSize: '0.78rem', color: ZAP_COLORS.textSecondary }}>{h}</TableCell>
               ))}
             </TableRow>
           </TableHead>
           <TableBody>
-            {loading ? <TableRow><TableCell colSpan={7} align="center"><CircularProgress size={28} sx={{ my: 3 }} /></TableCell></TableRow>
-              : coupons.map((c) => (
-                <TableRow key={c.id} hover>
-                  <TableCell>
-                    <Chip label={c.code} size="small" color="primary" sx={{ fontFamily: 'monospace', fontWeight: 700 }} />
-                  </TableCell>
-                  <TableCell sx={{ fontSize: '0.78rem' }}>{c.type === 'percent' ? 'Percentage' : 'Fixed'}</TableCell>
-                  <TableCell sx={{ fontSize: '0.78rem', fontWeight: 700 }}>
-                    {c.type === 'percent' ? `${c.value}%` : `₹${c.value}`}
-                  </TableCell>
-                  <TableCell sx={{ fontSize: '0.78rem' }}>{c.maxDiscount ? `₹${c.maxDiscount}` : '—'}</TableCell>
-                  <TableCell sx={{ fontSize: '0.78rem' }}>₹{c.minOrder || 0}</TableCell>
-                  <TableCell>
-                    <Switch size="small" checked={!!c.active} onChange={() => updateDoc(doc(db, COLLECTIONS.COUPONS, c.id), { active: !c.active }).then(fetch)} />
-                  </TableCell>
-                  <TableCell>
-                    <IconButton size="small" onClick={() => { setEditItem(c); setForm({ ...EMPTY_COUPON, ...c }); setDialog(true); }}><Edit fontSize="small" /></IconButton>
-                    <IconButton size="small" onClick={async () => { if (window.confirm('Delete coupon?')) { await deleteDoc(doc(db, COLLECTIONS.COUPONS, c.id)); fetch(); } }} sx={{ color: ZAP_COLORS.error }}><Delete fontSize="small" /></IconButton>
-                  </TableCell>
-                </TableRow>
-              ))
-            }
+            {loading ? (
+              <TableRow><TableCell colSpan={8} align="center"><CircularProgress size={28} sx={{ my: 3 }} /></TableCell></TableRow>
+            ) : coupons.map((c) => (
+              <TableRow key={c.id} hover>
+                <TableCell>
+                  <Chip label={c.code} size="small" color="primary" sx={{ fontFamily: 'monospace', fontWeight: 700 }} />
+                </TableCell>
+                <TableCell sx={{ fontSize: '0.78rem' }}>{c.type === 'percent' ? 'Percentage' : 'Fixed'}</TableCell>
+                <TableCell sx={{ fontSize: '0.78rem', fontWeight: 700 }}>
+                  {c.type === 'percent' ? `${c.value}%` : `₹${c.value}`}
+                </TableCell>
+                <TableCell sx={{ fontSize: '0.78rem' }}>₹{c.minOrder || 0}</TableCell>
+
+                {/* Usage column — shows "12 / 20" or "12 / ∞" */}
+                <TableCell sx={{ fontSize: '0.78rem' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Typography variant="body2" fontWeight={700} sx={{
+                      color: (c.maxTotalUses && (c.totalUsageCount || 0) >= c.maxTotalUses)
+                        ? ZAP_COLORS.error : 'inherit',
+                    }}>
+                      {c.totalUsageCount || 0}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      / {c.maxTotalUses || '∞'}
+                    </Typography>
+                    {c.maxTotalUses && (c.totalUsageCount || 0) >= c.maxTotalUses && (
+                      <Chip label="Exhausted" size="small" color="error" sx={{ fontSize: '0.65rem', height: 18 }} />
+                    )}
+                  </Box>
+                </TableCell>
+
+                {/* Per-user limit column */}
+                <TableCell sx={{ fontSize: '0.78rem' }}>
+                  {c.maxUsesPerUser || 1}x
+                </TableCell>
+
+                <TableCell>
+                  <Switch size="small" checked={!!c.active} onChange={() => updateDoc(doc(db, COLLECTIONS.COUPONS, c.id), { active: !c.active }).then(fetch)} />
+                </TableCell>
+                <TableCell>
+                  <IconButton size="small" onClick={() => { setEditItem(c); setForm({ ...EMPTY_COUPON, ...c }); setDialog(true); }}><Edit fontSize="small" /></IconButton>
+                  <IconButton size="small" onClick={async () => { if (window.confirm('Delete coupon?')) { await deleteDoc(doc(db, COLLECTIONS.COUPONS, c.id)); fetch(); } }} sx={{ color: ZAP_COLORS.error }}><Delete fontSize="small" /></IconButton>
+                </TableCell>
+              </TableRow>
+            ))}
           </TableBody>
         </Table>
       </TableContainer>
 
       <Dialog open={dialog} onClose={() => setDialog(false)} maxWidth="xs" fullWidth>
         <DialogTitle fontWeight={700}>{editItem ? 'Edit Coupon' : 'Add Coupon'}</DialogTitle>
+
+        {/* Live usage banner shown only when editing */}
+        {editItem && (
+          <Box sx={{ px: 3, pb: 1 }}>
+            <Alert severity={
+              editItem.maxTotalUses && (editItem.totalUsageCount || 0) >= editItem.maxTotalUses
+                ? 'error' : 'info'
+            } sx={{ borderRadius: 2 }}>
+              Used <strong>{editItem.totalUsageCount || 0}</strong> time(s)
+              {editItem.maxTotalUses ? ` out of ${editItem.maxTotalUses} allowed` : ' (no global limit set)'}
+              {editItem.lastUsedAt && ` — last used ${new Date(editItem.lastUsedAt?.toDate?.() ?? editItem.lastUsedAt).toLocaleDateString()}`}
+            </Alert>
+          </Box>
+        )}
+
         <DialogContent>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
             <TextField label="Coupon Code *" value={form.code} onChange={(e) => setForm((p) => ({ ...p, code: e.target.value.toUpperCase() }))} size="small" fullWidth />
@@ -249,13 +304,36 @@ export const AdminCoupons = () => {
                 <MenuItem value="fixed">Fixed Amount (₹)</MenuItem>
               </Select>
             </FormControl>
-            <TextField label={`Discount Value *`} value={form.value} onChange={(e) => setForm((p) => ({ ...p, value: e.target.value }))} size="small" fullWidth type="number"
+            <TextField
+              label="Discount Value *" value={form.value}
+              onChange={(e) => setForm((p) => ({ ...p, value: e.target.value }))}
+              size="small" fullWidth type="number"
               InputProps={{ endAdornment: <Box sx={{ color: ZAP_COLORS.textMuted, pr: 1 }}>{form.type === 'percent' ? '%' : '₹'}</Box> }}
             />
             {form.type === 'percent' && (
               <TextField label="Max Discount Cap (₹)" value={form.maxDiscount} onChange={(e) => setForm((p) => ({ ...p, maxDiscount: e.target.value }))} size="small" fullWidth type="number" />
             )}
             <TextField label="Minimum Order Amount (₹)" value={form.minOrder} onChange={(e) => setForm((p) => ({ ...p, minOrder: e.target.value }))} size="small" fullWidth type="number" />
+
+            {/* New: Max Total Uses */}
+            <TextField
+              label="Max Total Uses"
+              helperText="Max times this coupon can be used across all users. Leave blank for unlimited."
+              value={form.maxTotalUses}
+              onChange={(e) => setForm((p) => ({ ...p, maxTotalUses: e.target.value }))}
+              size="small" fullWidth type="number"
+              inputProps={{ min: 1 }}
+            />
+
+            {/* New: Max Uses Per User */}
+            <TextField
+              label="Max Uses Per User"
+              helperText="How many times one user can use this coupon. Default: 1."
+              value={form.maxUsesPerUser}
+              onChange={(e) => setForm((p) => ({ ...p, maxUsesPerUser: e.target.value }))}
+              size="small" fullWidth type="number"
+              inputProps={{ min: 1 }}
+            />
           </Box>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

@@ -54,26 +54,33 @@ const SearchOverlay = ({ onClose }) => {
     if (term.length < 2) { setSuggestions([]); return; }
     setLoading(true);
     try {
-      const col = collection(db, COLLECTIONS.PRODUCTS);
-      const constraints = [where('active', '==', true), limit(150)];
+      const storeId = activeUserStore?.id;
+      const col = collection(db, COLLECTIONS.STORE_INVENTORY);
+      const constraints = [where('active', '==', true)];
+      if (storeId) constraints.push(where('storeId', '==', storeId));
+      constraints.push(limit(150));
       const snap = await getDocs(query(col, ...constraints));
       const lower = term.toLowerCase();
-      const storeId = activeUserStore?.id;
       const docs = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        .filter((p) => {
-          if (storeId && p.storeId !== storeId) return false;
-          return (
-            p.name?.toLowerCase().includes(lower) ||
-            p.description?.toLowerCase().includes(lower) ||
-            p.unit?.toLowerCase().includes(lower)
-          );
+        .map((d) => {
+          const data = d.data();
+          return {
+            id: data.productId || d.id,
+            name: data.name || '',
+            unit: data.unit || '',
+            description: data.description || '',
+            images: data.images || [],
+            mrp: data.mrp || 0,
+            discountedPrice: data.sellRate || null,
+            stock: data.stock || 0,
+            storeId: data.storeId,
+          };
         })
-        .sort((a, b) => {
-          const aStarts = a.name?.toLowerCase().startsWith(lower) ? 0 : 1;
-          const bStarts = b.name?.toLowerCase().startsWith(lower) ? 0 : 1;
-          return aStarts - bStarts;
-        })
+        .filter((p) =>
+          p.name?.toLowerCase().includes(lower) ||
+          p.description?.toLowerCase().includes(lower) ||
+          p.unit?.toLowerCase().includes(lower)
+        )
         .slice(0, 7);
       setSuggestions(docs);
     } catch { setSuggestions([]); }
