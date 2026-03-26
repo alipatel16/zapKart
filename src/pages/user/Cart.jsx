@@ -47,15 +47,45 @@ const Cart = () => {
         query(collection(db, COLLECTIONS.COUPONS), where('code', '==', code), where('active', '==', true))
       );
       if (snap.empty) { setCouponError('Invalid or expired coupon code.'); return; }
+
       const data = snap.docs[0].data();
+
+      // Expiry check
       if (data.expiresAt) {
         const expiry = data.expiresAt?.toDate ? data.expiresAt.toDate() : new Date(data.expiresAt);
         if (expiry < new Date()) { setCouponError('This coupon has expired.'); return; }
       }
+
+      // Minimum order check
       if (data.minOrder && subtotal < data.minOrder) {
         setCouponError(`Minimum order ₹${data.minOrder} required for this coupon.`);
         return;
       }
+
+      // Global usage limit check
+      if (data.maxTotalUses != null) {
+        const used = data.totalUsageCount || 0;
+        if (used >= data.maxTotalUses) {
+          setCouponError('This coupon has reached its maximum usage limit and is no longer available.');
+          return;
+        }
+      }
+
+      // Per-user usage check
+      if (user) {
+        const usedBy       = Array.isArray(data.usedBy) ? data.usedBy : [];
+        const maxPerUser   = data.maxUsesPerUser || 1;
+        const userUseCount = usedBy.filter((u) => u === user.uid).length;
+        if (userUseCount >= maxPerUser) {
+          setCouponError(
+            maxPerUser === 1
+              ? 'You have already used this coupon.'
+              : `You have already used this coupon ${userUseCount} time(s). Limit: ${maxPerUser}.`
+          );
+          return;
+        }
+      }
+
       setCoupon({ code: data.code, type: data.type, value: data.value, maxDiscount: data.maxDiscount });
       setCouponInput('');
     } catch {

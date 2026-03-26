@@ -17,7 +17,7 @@ import {
 import { Add, Edit, Delete, Search, FilterList } from '@mui/icons-material';
 import {
   collection, query, orderBy, getDocs, doc, addDoc, updateDoc, deleteDoc,
-  serverTimestamp, limit, startAfter, where, getDoc, setDoc, getCountFromServer,
+  serverTimestamp, limit, startAfter, where, getCountFromServer,
 } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
 import { ZAP_COLORS } from '../../theme';
@@ -200,63 +200,19 @@ const AdminPurchases = () => {
     setDialog(true);
   };
 
-  // ── Helper: update or create storeInventory doc ────────────────────────────
-  const upsertStoreInventory = async (storeId, productId, stockDelta, pricingUpdate = null) => {
-    const docRef = doc(db, COLLECTIONS.STORE_INVENTORY, siDocId(storeId, productId));
-    const existing = await getDoc(docRef);
-
-    if (existing.exists()) {
-      const currentStock = existing.data().stock || 0;
-      const updateData = {
-        stock: Math.max(0, currentStock + stockDelta),
-        updatedAt: serverTimestamp(),
-      };
-      if (pricingUpdate) {
-        if (pricingUpdate.mrp) updateData.mrp = pricingUpdate.mrp;
-        if (pricingUpdate.sellRate) updateData.sellRate = pricingUpdate.sellRate;
-        if (pricingUpdate.costPrice) updateData.costPrice = pricingUpdate.costPrice;
-      }
-      await updateDoc(docRef, updateData);
-    } else {
-      // First purchase for this product in this store — create storeInventory doc
-      const product = allProducts.find((p) => p.id === productId);
-      if (!product) return;
-      await setDoc(docRef, {
-        storeId,
-        productId,
-        // Denormalized from global product catalog
-        name: product.name,
-        unit: product.unit || '',
-        categoryId: product.categoryId || '',
-        description: product.description || '',
-        images: product.images || [],
-        isFeatured: !!product.isFeatured,
-        isExclusive: !!product.isExclusive,
-        isNewArrival: !!product.isNewArrival,
-        active: product.active !== false,
-        // Store-specific
-        stock: Math.max(0, stockDelta),
-        mrp: pricingUpdate?.mrp || 0,
-        sellRate: pricingUpdate?.sellRate || 0,
-        costPrice: pricingUpdate?.costPrice || 0,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    }
-  };
-
   // ── Save purchase (add or edit) ────────────────────────────────────────────
+  // Cloud Function (onPurchaseCreated / onPurchaseUpdated) handles all stock updates.
   const handleSave = async () => {
     const newItems = form.items
       .filter((i) => i.productId && i.quantity > 0)
       .map((i) => ({
-        productId: i.productId,
+        productId:   i.productId,
         productName: i.productName,
-        unit: i.unit || '',
-        quantity: parseInt(i.quantity),
-        costPrice: parseFloat(i.costPrice) || 0,
-        mrp: parseFloat(i.mrp) || 0,
-        sellRate: parseFloat(i.sellRate) || 0,
+        unit:        i.unit || '',
+        quantity:    parseInt(i.quantity),
+        costPrice:   parseFloat(i.costPrice) || 0,
+        mrp:         parseFloat(i.mrp)       || 0,
+        sellRate:    parseFloat(i.sellRate)  || 0,
       }));
 
     if (newItems.length === 0) {
@@ -267,63 +223,30 @@ const AdminPurchases = () => {
     setSaving(true);
     setError('');
     try {
-      const storeId = adminStore?.id;
+      const storeId   = adminStore?.id;
       const totalCost = newItems.reduce((s, i) => s + i.costPrice * i.quantity, 0);
 
       if (editPurchase) {
-        // ── EDIT: calculate delta per product and adjust storeInventory ──
+        // EDIT — just update the Firestore doc.
+        // Cloud Function (onPurchaseUpdated) will compute the delta and adjust stock.
         await updateDoc(doc(db, COLLECTIONS.PURCHASE, editPurchase.id), {
           ...form,
-          items: newItems,
+          items:     newItems,
           totalCost,
           updatedAt: serverTimestamp(),
         });
-
-        const oldItems = editPurchase.items || [];
-
-        // Process new/changed items
-        for (const newItem of newItems) {
-          const oldItem = oldItems.find((o) => o.productId === newItem.productId);
-          const oldQty = oldItem ? (parseInt(oldItem.quantity) || 0) : 0;
-          const delta = newItem.quantity - oldQty;
-
-          await upsertStoreInventory(storeId, newItem.productId, delta, {
-            mrp: newItem.mrp,
-            sellRate: newItem.sellRate,
-            costPrice: newItem.costPrice,
-          });
-        }
-
-        // Handle removed items (were in old but not in new)
-        for (const oldItem of oldItems) {
-          const stillExists = newItems.find((n) => n.productId === oldItem.productId);
-          if (!stillExists) {
-            await upsertStoreInventory(storeId, oldItem.productId, -(parseInt(oldItem.quantity) || 0));
-          }
-        }
-
-        setSuccess('Purchase updated and inventory adjusted!');
+        setSuccess('Purchase updated! Inventory will adjust automatically.');
       } else {
-        // ── ADD: new purchase ──
-        const purchaseData = {
+        // ADD — just create the Firestore doc.
+        // Cloud Function (onPurchaseCreated) will add stock.
+        await addDoc(collection(db, COLLECTIONS.PURCHASE), {
           ...form,
           storeId,
-          items: newItems,
+          items:     newItems,
           totalCost,
           createdAt: serverTimestamp(),
-        };
-        await addDoc(collection(db, COLLECTIONS.PURCHASE), purchaseData);
-
-        // Add stock to storeInventory for each item
-        for (const item of newItems) {
-          await upsertStoreInventory(storeId, item.productId, item.quantity, {
-            mrp: item.mrp,
-            sellRate: item.sellRate,
-            costPrice: item.costPrice,
-          });
-        }
-
-        setSuccess('Purchase recorded and inventory updated!');
+        });
+        setSuccess('Purchase recorded! Inventory will update automatically.');
       }
 
       setDialog(false);
@@ -339,21 +262,14 @@ const AdminPurchases = () => {
   };
 
   // ── Delete purchase ────────────────────────────────────────────────────────
+  // Cloud Function (onPurchaseDeleted) handles stock deduction automatically.
   const handleDelete = async (purchase) => {
-    if (!window.confirm('Delete this purchase? Stock will be deducted accordingly.')) return;
+    if (!window.confirm('Delete this purchase? Stock will be deducted automatically.')) return;
     try {
       await deleteDoc(doc(db, COLLECTIONS.PURCHASE, purchase.id));
-
-      for (const item of purchase.items || []) {
-        await upsertStoreInventory(
-          adminStore?.id,
-          item.productId,
-          -(parseInt(item.quantity) || 0)
-        );
-      }
-
+      // Cloud Function (onPurchaseDeleted) handles stock deduction.
       setPurchases((prev) => prev.filter((p) => p.id !== purchase.id));
-      setSuccess('Purchase deleted and inventory adjusted!');
+      setSuccess('Purchase deleted. Inventory will adjust automatically.');
       setTimeout(() => setSuccess(''), 4000);
     } catch (err) {
       alert('Failed to delete: ' + err.message);
