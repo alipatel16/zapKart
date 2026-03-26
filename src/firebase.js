@@ -40,26 +40,45 @@ export default app;
 // FIRESTORE COLLECTION NAMES — single source of truth
 // ============================================================
 export const COLLECTIONS = {
-  USERS:      'users',
-  PRODUCTS:   'products',
-  CATEGORIES: 'categories',
-  ORDERS:     'orders',
-  BANNERS:    'banners',
-  COUPONS:    'coupons',
-  PURCHASE:   'purchases',
-  INVENTORY:  'inventory',
-  SETTINGS:   'settings',
-  STORES:     'stores',
-  FCM_TOKENS: 'fcmTokens',
+  USERS:           'users',
+  PRODUCTS:        'products',         // Global product catalog (no storeId, no price, no stock)
+  CATEGORIES:      'categories',
+  ORDERS:          'orders',
+  BANNERS:         'banners',
+  COUPONS:         'coupons',
+  PURCHASE:        'purchases',
+  STORE_INVENTORY: 'storeInventory',   // Per-store stock, pricing, denormalized product info
+  SETTINGS:        'settings',
+  STORES:          'stores',
+  FCM_TOKENS:      'fcmTokens',
 };
 
 // ============================================================
 // FIRESTORE INDEXES REQUIRED (create in Firebase Console):
-// orders: userId ASC, createdAt DESC
-// orders: status ASC, createdAt DESC
-// products: categoryId ASC, createdAt DESC
-// products: isFeatured ASC, createdAt DESC
-// products: isExclusive ASC, createdAt DESC
-// products: isNewArrival ASC, createdAt DESC
-// inventory: productId ASC, updatedAt DESC
+//
+// products (global catalog):
+//   categoryId ASC, name ASC
+//   active ASC, createdAt DESC
+//   categoryId ASC, active ASC, createdAt DESC
+//   isFeatured ASC, active ASC, createdAt DESC
+//   isExclusive ASC, active ASC, createdAt DESC
+//   isNewArrival ASC, active ASC, createdAt DESC
+//
+// storeInventory (per-store stock/pricing):
+//   storeId ASC, active ASC, createdAt DESC
+//   storeId ASC, categoryId ASC, active ASC
+//   storeId ASC, productId ASC
+//   storeId ASC, isFeatured ASC, active ASC, createdAt DESC
+//   storeId ASC, isExclusive ASC, active ASC, createdAt DESC
+//   storeId ASC, isNewArrival ASC, active ASC, createdAt DESC
+//   storeId ASC, stock ASC (for low-stock queries)
+//
+// purchases:
+//   storeId ASC, createdAt DESC
+//
+// orders:
+//   userId ASC, createdAt DESC
+//   status ASC, createdAt DESC
+//   storeId ASC, createdAt DESC
+//   storeId ASC, status ASC, createdAt DESC
 // ============================================================

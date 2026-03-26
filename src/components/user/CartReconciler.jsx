@@ -6,19 +6,20 @@
 // NotificationsInit) so it runs on EVERY page, not just Cart.
 //
 // When the active store changes (user changes delivery location),
-// it fetches all products for the new store and reconciles the
-// cart: items matched by name+unit are updated with the new
-// store's product data; unmatched items are flagged _unavailable.
+// it fetches all storeInventory docs for the new store and
+// reconciles the cart: items matched by PRODUCT ID are updated
+// with the new store's pricing & stock; unmatched items are
+// flagged _unavailable.
+//
+// Product IDs are GLOBAL — the same productId works across
+// all stores. Each store manages its own stock/pricing via
+// the storeInventory collection.
 // ============================================================
 import { useEffect, useRef } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
 import { useCart } from '../../context/CartContext';
 import { useStore } from '../../context/StoreContext';
-
-// Composite key: name + unit — differentiates "Harpic 180ml" from "Harpic 500ml"
-const itemKey = (name, unit) =>
-  `${(name || '').trim().toLowerCase()}|||${(unit || '').trim().toLowerCase()}`;
 
 const CartReconciler = () => {
   const { items, replaceItems } = useCart();
@@ -45,40 +46,52 @@ const CartReconciler = () => {
 
     const reconcile = async () => {
       try {
-        // Single query — all active products for the new store
-        // Uses composite index: storeId ASC + active ASC + createdAt DESC
+        // Fetch storeInventory for the new store (active items with stock)
         const snap = await getDocs(
           query(
-            collection(db, COLLECTIONS.PRODUCTS),
+            collection(db, COLLECTIONS.STORE_INVENTORY),
             where('storeId', '==', activeUserStore.id),
             where('active',  '==', true),
           )
         );
 
-        // Build lookup map keyed by name+unit (both normalised)
-        // If the same name+unit appears twice, prefer the one with more stock
-        const byKey = {};
+        // Build lookup map keyed by productId
+        const byProductId = {};
         snap.docs.forEach((d) => {
           const data = d.data();
-          const k    = itemKey(data.name, data.unit);
-          if (!byKey[k] || (data.stock || 0) > (byKey[k].stock || 0)) {
-            byKey[k] = { id: d.id, ...data };
+          // If duplicate productId (shouldn't happen), prefer higher stock
+          if (!byProductId[data.productId] || (data.stock || 0) > (byProductId[data.productId].stock || 0)) {
+            byProductId[data.productId] = { id: data.productId, ...data, _siDocId: d.id };
           }
         });
 
         const next = items.map((item) => {
-          const k     = itemKey(item.name, item.unit);
-          const match = byKey[k];
+          // Match by product ID (global, same across stores)
+          const match = byProductId[item.id] || byProductId[item.productId];
 
           if (match) {
-            // Found — swap to new store's product data, keep user's quantity
+            // Found — swap to new store's pricing & stock, keep user's quantity
             return {
-              ...match,
-              quantity:     item.quantity,
+              id: match.productId,         // keep global productId as the item id
+              productId: match.productId,
+              storeId: activeUserStore.id,
+              name: match.name,
+              unit: match.unit || '',
+              categoryId: match.categoryId || '',
+              description: match.description || '',
+              images: match.images || [],
+              mrp: match.mrp || 0,
+              discountedPrice: match.sellRate || null,  // sellRate maps to discountedPrice
+              stock: match.stock || 0,
+              isFeatured: match.isFeatured,
+              isExclusive: match.isExclusive,
+              isNewArrival: match.isNewArrival,
+              active: match.active,
+              quantity: item.quantity,
               _unavailable: false,
             };
           } else {
-            // Not found — flag as unavailable, keep original data for display
+            // Not found at this store — flag as unavailable
             return { ...item, _unavailable: true };
           }
         });

@@ -1,74 +1,103 @@
-import React, { useEffect, useState } from 'react';
+// ============================================================
+// src/pages/user/Home.jsx
+//
+// UPDATED: All product queries now hit STORE_INVENTORY instead
+// of PRODUCTS. The storeInventory docs have the same shape
+// (name, unit, images, mrp, etc.) plus store-specific pricing.
+// sellRate maps to discountedPrice for backward compatibility.
+// ============================================================
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Box, Container, Typography, Grid, Skeleton, Chip, Button,
-  useTheme, useMediaQuery,
+  Box, Container, Typography, Grid, Button, Chip,
+  useTheme, useMediaQuery, Skeleton,
 } from '@mui/material';
 import {
-  collection, getDocs, query, where, orderBy, limit, doc, getDoc,
+  collection, query, where, orderBy, getDocs, limit, doc, getDoc,
 } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
-import BannerCarousel from '../../components/user/BannerCarousel';
-import ProductCard, { ProductCardSkeleton } from '../../components/user/ProductCard';
-import { ZAP_COLORS } from '../../theme';
-import ActiveOrdersBar from '../../components/user/ActiveOrdersBar';
 import { useStore } from '../../context/StoreContext';
+import ProductCard, { ProductCardSkeleton } from '../../components/user/ProductCard';
+import BannerCarousel from '../../components/user/BannerCarousel';
+import ActiveOrdersBar from '../../components/user/ActiveOrdersBar';
+import { ZAP_COLORS } from '../../theme';
 
-const SectionHeader = ({ title, subtitle, onSeeAll, seeAllLabel = 'See all' }) => (
-  <Box sx={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', mb: 2 }}>
+// ── Helper: map storeInventory doc → product shape for ProductCard ───────────
+const mapSI = (d) => {
+  const data = d.data ? d.data() : d;
+  const id   = d.id    || data.productId;
+  return {
+    id:              data.productId || id,
+    productId:       data.productId || id,
+    storeId:         data.storeId,
+    name:            data.name || '',
+    unit:            data.unit || '',
+    categoryId:      data.categoryId || '',
+    description:     data.description || '',
+    images:          data.images || [],
+    mrp:             data.mrp || 0,
+    discountedPrice: data.sellRate || null,
+    stock:           data.stock || 0,
+    isFeatured:      data.isFeatured || false,
+    isExclusive:     data.isExclusive || false,
+    isNewArrival:    data.isNewArrival || false,
+    active:          data.active !== false,
+    createdAt:       data.createdAt,
+  };
+};
+
+// ── Reusable section header ──────────────────────────────────────────────────
+const SectionHeader = ({ title, subtitle, onSeeAll, seeAllLabel }) => (
+  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', mb: 1.5 }}>
     <Box>
-      <Typography variant="h6" sx={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, lineHeight: 1.2 }}>
-        {title}
-      </Typography>
+      <Typography variant="subtitle1" fontWeight={700} lineHeight={1.3}>{title}</Typography>
       {subtitle && <Typography variant="caption" color="text.secondary">{subtitle}</Typography>}
     </Box>
     {onSeeAll && (
-      <Typography variant="caption" onClick={onSeeAll}
-        sx={{ color: ZAP_COLORS.primary, fontWeight: 600, cursor: 'pointer', flexShrink: 0, ml: 1 }}>
-        {seeAllLabel} →
-      </Typography>
+      <Typography variant="caption" fontWeight={600} sx={{ color: ZAP_COLORS.primary, cursor: 'pointer' }}
+        onClick={onSeeAll}>{seeAllLabel || 'See all →'}</Typography>
     )}
   </Box>
 );
 
+// ── Category horizontal scroll ───────────────────────────────────────────────
 const CategoryScroll = ({ categories, loading }) => {
   const navigate = useNavigate();
-  const emojis = ['🥦', '🍎', '🥛', '🛒', '🧴', '🍚', '🧃', '🧹', '🍪', '🥤'];
+  const emojis = ['🛒', '🥦', '🧴', '🍞', '🥤', '🧹', '🍪', '🍖'];
+  if (loading) return (
+    <Box sx={{ display: 'flex', gap: 1.5, overflowX: 'auto', pb: 1 }}>
+      {Array(6).fill(0).map((_, i) => <Skeleton key={i} variant="rounded" width={72} height={80} sx={{ borderRadius: 2, flexShrink: 0 }} />)}
+    </Box>
+  );
   return (
     <Box sx={{ display: 'flex', gap: 1.5, overflowX: 'auto', pb: 1, scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }}>
-      {loading
-        ? Array(8).fill(0).map((_, i) => (
-          <Box key={i} sx={{ flexShrink: 0, textAlign: 'center' }}>
-            <Skeleton variant="rounded" width={64} height={64} sx={{ borderRadius: 3, mb: 0.5 }} />
-            <Skeleton width={56} height={12} sx={{ mx: 'auto' }} />
+      {categories.map((cat, i) => (
+        <Box key={cat.id} onClick={() => navigate(`/category/${cat.id}`)}
+          sx={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5,
+            cursor: 'pointer', flexShrink: 0, width: 72,
+            '&:active': { transform: 'scale(0.95)' },
+          }}>
+          <Box sx={{
+            width: 56, height: 56, borderRadius: 2.5, overflow: 'hidden',
+            border: `2px solid ${ZAP_COLORS.border}`, background: '#fff',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            {cat.imageUrl
+              ? <Box component="img" src={cat.imageUrl} alt={cat.name} sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              : <Box sx={{ fontSize: '1.6rem' }}>{emojis[i % emojis.length]}</Box>
+            }
           </Box>
-        ))
-        : categories.map((cat, i) => (
-          <Box key={cat.id} onClick={() => navigate(`/category/${cat.id}`)}
-            sx={{ flexShrink: 0, textAlign: 'center', cursor: 'pointer', width: 72 }}>
-            <Box sx={{
-              width: 64, height: 64, borderRadius: 3, mx: 'auto', mb: 0.5,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: `${ZAP_COLORS.primary}${10 + (i % 5) * 3}`,
-              border: `1px solid ${ZAP_COLORS.primary}20`, overflow: 'hidden', transition: 'transform 0.2s',
-              '&:hover': { transform: 'scale(1.05)' }, '&:active': { transform: 'scale(0.95)' },
-            }}>
-              {cat.imageUrl
-                ? <Box component="img" src={cat.imageUrl} alt={cat.name} sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                : <Box sx={{ fontSize: '1.6rem' }}>{emojis[i % emojis.length]}</Box>
-              }
-            </Box>
-            <Typography variant="caption" sx={{ fontWeight: 500, fontSize: '0.68rem', lineHeight: 1.2, display: 'block' }} noWrap>
-              {cat.name}
-            </Typography>
-          </Box>
-        ))
-      }
+          <Typography variant="caption" sx={{ fontWeight: 500, fontSize: '0.68rem', lineHeight: 1.2, display: 'block' }} noWrap>
+            {cat.name}
+          </Typography>
+        </Box>
+      ))}
     </Box>
   );
 };
 
-// Renders a single "Top Picks for [Category]" section
+// ── Top Picks section — queries STORE_INVENTORY ──────────────────────────────
 const TopPicksSection = ({ categoryConfig, storeId, isMobile }) => {
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
@@ -78,12 +107,16 @@ const TopPicksSection = ({ categoryConfig, storeId, isMobile }) => {
     const fetchProducts = async () => {
       setLoading(true);
       try {
-        const constraints = [where('active', '==', true), where('categoryId', '==', categoryConfig.categoryId)];
+        const constraints = [
+          where('active', '==', true),
+          where('categoryId', '==', categoryConfig.categoryId),
+        ];
         if (storeId) constraints.push(where('storeId', '==', storeId));
         constraints.push(orderBy('createdAt', 'desc'));
         constraints.push(limit(isMobile ? 4 : 6));
-        const snap = await getDocs(query(collection(db, COLLECTIONS.PRODUCTS), ...constraints));
-        setProducts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+
+        const snap = await getDocs(query(collection(db, COLLECTIONS.STORE_INVENTORY), ...constraints));
+        setProducts(snap.docs.map(mapSI));
       } finally { setLoading(false); }
     };
     fetchProducts();
@@ -112,6 +145,7 @@ const TopPicksSection = ({ categoryConfig, storeId, isMobile }) => {
   );
 };
 
+// ── Main Home page ───────────────────────────────────────────────────────────
 const Home = () => {
   const navigate = useNavigate();
   const theme = useTheme();
@@ -130,24 +164,25 @@ const Home = () => {
     const fetchAll = async () => {
       try {
         const storeId = activeUserStore?.id;
+        // Store constraint for storeInventory queries
         const sc = storeId ? [where('storeId', '==', storeId)] : [];
 
         const [bannersSnap, catsSnap, featuredSnap, exclusiveSnap, newArrivalSnap, topPicksSnap] = await Promise.all([
-          // Banners are NOT filtered by storeId — they load globally so they
-          // always appear even if banners don't have storeId set in Firestore.
+          // Banners are global
           getDocs(query(collection(db, COLLECTIONS.BANNERS), where('active', '==', true), orderBy('order'))),
           getDocs(query(collection(db, COLLECTIONS.CATEGORIES), where('active', '==', true), orderBy('order'))),
-          getDocs(query(collection(db, COLLECTIONS.PRODUCTS), ...sc, where('isFeatured', '==', true), where('active', '==', true), limit(isMobile ? 4 : 5))),
-          getDocs(query(collection(db, COLLECTIONS.PRODUCTS), ...sc, where('isExclusive', '==', true), where('active', '==', true), limit(8))),
-          getDocs(query(collection(db, COLLECTIONS.PRODUCTS), ...sc, where('isNewArrival', '==', true), where('active', '==', true), orderBy('createdAt', 'desc'), limit(4))),
+          // ── Products from STORE_INVENTORY ──
+          getDocs(query(collection(db, COLLECTIONS.STORE_INVENTORY), ...sc, where('isFeatured', '==', true), where('active', '==', true), limit(isMobile ? 4 : 5))),
+          getDocs(query(collection(db, COLLECTIONS.STORE_INVENTORY), ...sc, where('isExclusive', '==', true), where('active', '==', true), limit(8))),
+          getDocs(query(collection(db, COLLECTIONS.STORE_INVENTORY), ...sc, where('isNewArrival', '==', true), where('active', '==', true), orderBy('createdAt', 'desc'), limit(4))),
           getDoc(doc(db, 'settings', 'topPicksConfig')),
         ]);
 
         setBanners(bannersSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
         setCategories(catsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setFeatured(featuredSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setExclusive(exclusiveSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setNewArrivals(newArrivalSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setFeatured(featuredSnap.docs.map(mapSI));
+        setExclusive(exclusiveSnap.docs.map(mapSI));
+        setNewArrivals(newArrivalSnap.docs.map(mapSI));
 
         if (topPicksSnap.exists()) {
           const config = topPicksSnap.data().categories || [];
@@ -185,7 +220,7 @@ const Home = () => {
           ))}
         </Box>
 
-        {/* Active orders bar (desktop inline card; mobile rendered from UserLayout) */}
+        {/* Active orders bar (desktop) */}
         <Box sx={{ display: { xs: 'none', md: 'block' } }}>
           <ActiveOrdersBar />
         </Box>
@@ -262,7 +297,7 @@ const Home = () => {
           </Box>
         )}
 
-        {/* ── Top Picks by Category (admin-configurable, up to 6) ── */}
+        {/* Top Picks by Category */}
         {topPicksConfig.map((catConfig) => (
           <TopPicksSection
             key={catConfig.categoryId}
@@ -272,7 +307,7 @@ const Home = () => {
           />
         ))}
 
-        {/* Bottom CTA when no top picks are configured */}
+        {/* Bottom CTA */}
         {!loading && topPicksConfig.length === 0 && (
           <Box sx={{ mt: 4, p: 3, borderRadius: 3, textAlign: 'center', background: `${ZAP_COLORS.primary}08`, border: `1px solid ${ZAP_COLORS.primary}15` }}>
             <Typography variant="h6" fontWeight={700} mb={0.5}>Browse All Products</Typography>

@@ -1,20 +1,27 @@
 // ============================================================
 // functions/index.js
 // Deploy with:  firebase deploy --only functions
+//
+// Stock operations now target the `storeInventory` collection
+// (docs keyed as `{storeId}__{productId}`) instead of `products`.
+// Products collection is now a global catalog with no stock/pricing.
 // ============================================================
 
 const { onDocumentCreated, onDocumentUpdated } = require('firebase-functions/v2/firestore');
 const { onCall, HttpsError }                   = require('firebase-functions/v2/https');
-const { onSchedule }                           = require('firebase-functions/v2/scheduler'); // ← FCM cleanup scheduler
+const { onSchedule }                           = require('firebase-functions/v2/scheduler');
 const { initializeApp }                        = require('firebase-admin/app');
 const { getFirestore, FieldValue }             = require('firebase-admin/firestore');
 const { getMessaging }                         = require('firebase-admin/messaging');
-const crypto                                   = require('crypto'); // built-in Node module
+const crypto                                   = require('crypto');
 
 initializeApp();
 
 const db        = getFirestore();
 const messaging = getMessaging();
+
+// ── Helper: storeInventory doc ID ────────────────────────────────────────────
+const siDocId = (storeId, productId) => `${storeId}__${productId}`;
 
 // ── Shared helper: clean up stale FCM tokens after a multicast send ─────────
 const cleanStaleTokens = async (tokenSnap, responses) => {
@@ -51,17 +58,6 @@ const STATUS_COPY = {
 // ============================================================
 // CALLABLE: Verify Razorpay payment signature server-side
 // ============================================================
-// ✅ SECURITY FIX: Previously the client stored the Razorpay signature but
-// never verified it — any user could forge paymentInfo and mark their order
-// as 'paid'. Now the client calls this function after the Razorpay checkout
-// completes. We HMAC-verify the signature with our secret key (never exposed
-// to the client) before updating paymentStatus to 'paid'.
-//
-// Setup:
-//   firebase functions:secrets:set RAZORPAY_KEY_SECRET
-//   (paste your Razorpay Key Secret when prompted)
-//
-// The client writes the order with paymentStatus:'pending', then calls this.
 exports.verifyRazorpayPayment = onCall(
   { secrets: ['RAZORPAY_KEY_SECRET'] },
   async (req) => {
@@ -75,7 +71,6 @@ exports.verifyRazorpayPayment = onCall(
       throw new HttpsError('invalid-argument', 'Missing required payment fields.');
     }
 
-    // Verify the order belongs to the calling user before doing anything
     const orderSnap = await db.collection('orders').doc(orderId).get();
     if (!orderSnap.exists) {
       throw new HttpsError('not-found', 'Order not found.');
@@ -84,7 +79,6 @@ exports.verifyRazorpayPayment = onCall(
       throw new HttpsError('permission-denied', 'This order does not belong to you.');
     }
 
-    // HMAC-SHA256 verification — Razorpay's documented approach
     const secret   = process.env.RAZORPAY_KEY_SECRET;
     const body     = razorpay_order_id + '|' + razorpay_payment_id;
     const expected = crypto.createHmac('sha256', secret).update(body).digest('hex');
@@ -94,7 +88,6 @@ exports.verifyRazorpayPayment = onCall(
       throw new HttpsError('permission-denied', 'Payment signature verification failed.');
     }
 
-    // Signature is valid — mark the order as paid
     await db.collection('orders').doc(orderId).update({
       paymentStatus: 'paid',
       paymentInfo: {
@@ -113,7 +106,9 @@ exports.verifyRazorpayPayment = onCall(
 // ============================================================
 // TRIGGER 1: Validate order total & deduct stock on new order
 // ============================================================
-// Runs server-side so no client can manipulate prices or skip stock deduction.
+// Stock is now deducted from storeInventory (not products).
+// Each order has a storeId; items have productId (global).
+// storeInventory doc ID = `{storeId}__{productId}`
 exports.validateAndProcessOrder = onDocumentCreated(
   'orders/{orderId}',
   async (event) => {
@@ -122,9 +117,13 @@ exports.validateAndProcessOrder = onDocumentCreated(
 
     if (!order || !Array.isArray(order.items) || order.items.length === 0) return;
 
-    // ✅ SECURITY FIX: Reject orders with unreasonable item quantities.
-    // A client could write quantity:99999 to drain all stock. We cancel
-    // the order before touching stock if any item looks suspicious.
+    const storeId = order.storeId;
+    if (!storeId) {
+      console.warn(`[validateOrder] Order ${orderId} has no storeId. Skipping.`);
+      return;
+    }
+
+    // Validate item quantities
     for (const item of order.items) {
       if (!item.id || typeof item.quantity !== 'number' || item.quantity < 1 || item.quantity > 100) {
         console.warn(`[validateOrder] Order ${orderId} has invalid quantity for item ${item.id}. Cancelling.`);
@@ -137,10 +136,7 @@ exports.validateAndProcessOrder = onDocumentCreated(
       }
     }
 
-    // ✅ COD ABUSE FIX: Cancel if user already has 2+ active unpaid COD orders.
-    // Prevents someone spamming COD orders with no intention of paying.
-    // The client-side check in Checkout.jsx gives a friendly message; this is
-    // the server-side safety net that can't be bypassed via the API.
+    // COD abuse prevention
     if (order.paymentMethod === 'cod') {
       try {
         const activeCodSnap = await db.collection('orders')
@@ -149,8 +145,6 @@ exports.validateAndProcessOrder = onDocumentCreated(
           .where('paymentStatus', '==', 'pending')
           .get();
 
-        // The current order has ALREADY been written to Firestore, so it shows
-        // up in the query above — subtract 1 to get the pre-existing count.
         const activeCount = activeCodSnap.docs.filter((d) => {
           const s = d.data().status;
           return s !== 'cancelled' && s !== 'delivered';
@@ -162,14 +156,13 @@ exports.validateAndProcessOrder = onDocumentCreated(
           );
           await db.collection('orders').doc(orderId).update({
             status:       'cancelled',
-            cancelReason: 'Maximum 2 unpaid COD orders allowed at a time. Please complete or cancel existing orders.',
+            cancelReason: 'Maximum 2 unpaid COD orders allowed at a time.',
             updatedAt:    FieldValue.serverTimestamp(),
           });
           return;
         }
       } catch (err) {
         console.warn('[COD Limit] Could not check active COD orders:', err.message);
-        // Non-fatal — continue processing the order.
       }
     }
 
@@ -187,27 +180,29 @@ exports.validateAndProcessOrder = onDocumentCreated(
       console.warn('[validateOrder] Could not fetch settings, using defaults:', err.message);
     }
 
-    // ── 2. Fetch product prices & build stock update list ───
+    // ── 2. Fetch storeInventory prices & build stock update list ───
     let serverSubtotal = 0;
     const stockItems   = []; // { ref, currentStock, deductQty }
 
     for (const item of order.items) {
       try {
-        const productSnap = await db.collection('products').doc(item.id).get();
-        if (!productSnap.exists) {
-          console.warn(`[validateOrder] Product ${item.id} not found — skipping`);
+        const siRef = db.collection('storeInventory').doc(siDocId(storeId, item.id));
+        const siSnap = await siRef.get();
+
+        if (!siSnap.exists) {
+          console.warn(`[validateOrder] storeInventory not found for store=${storeId} product=${item.id} — skipping`);
           continue;
         }
-        const product = productSnap.data();
-        const price   = product.discountedPrice || product.mrp || 0;
+        const siData = siSnap.data();
+        const price  = siData.sellRate || siData.mrp || 0;
         serverSubtotal += price * item.quantity;
         stockItems.push({
-          ref:          productSnap.ref,
-          currentStock: product.stock || 0,
+          ref:          siRef,
+          currentStock: siData.stock || 0,
           deductQty:    item.quantity,
         });
       } catch (err) {
-        console.warn(`[validateOrder] Error fetching product ${item.id}:`, err.message);
+        console.warn(`[validateOrder] Error fetching storeInventory for ${item.id}:`, err.message);
       }
     }
 
@@ -231,22 +226,19 @@ exports.validateAndProcessOrder = onDocumentCreated(
             (coupon.expiresAt.toDate ? coupon.expiresAt.toDate() : new Date(coupon.expiresAt)) < new Date();
           const belowMin = coupon.minOrder && serverSubtotal < coupon.minOrder;
 
-          // ✅ SECURITY FIX: Enforce per-user coupon usage limit.
           const usedBy      = Array.isArray(coupon.usedBy) ? coupon.usedBy : [];
           const alreadyUsed = usedBy.includes(order.userId);
+          const maxUses     = coupon.maxUsesPerUser || 1;
+          const userUseCount = usedBy.filter((u) => u === order.userId).length;
 
-          if (!expired && !belowMin && !alreadyUsed) {
+          if (!expired && !belowMin && !alreadyUsed && userUseCount < maxUses) {
             if (coupon.type === 'percent') {
               serverDiscount = Math.min(
                 (serverSubtotal * coupon.value) / 100,
-                coupon.maxDiscount != null ? coupon.maxDiscount : Infinity,
+                coupon.maxDiscount || Infinity,
               );
             } else {
               serverDiscount = coupon.value || 0;
-            }
-          } else {
-            if (alreadyUsed) {
-              console.warn(`[validateOrder] Coupon ${order.couponCode} already used by ${order.userId}`);
             }
           }
         }
@@ -255,39 +247,31 @@ exports.validateAndProcessOrder = onDocumentCreated(
       }
     }
 
-    // ── 4. Recalculate totals ────────────────────────────────
-    const serverDelivery = serverSubtotal >= FREE_DELIVERY_ABOVE ? 0 : DELIVERY_CHARGE;
-    const serverTotal    = Math.round(serverSubtotal - serverDiscount + serverDelivery);
-    const submittedTotal = Number(order.total) || 0;
-    const discrepancy    = serverTotal - submittedTotal;
+    // ── 4. Calculate server-side total ───────────────────────
+    const afterDiscount  = serverSubtotal - serverDiscount;
+    const serverDelivery = afterDiscount >= FREE_DELIVERY_ABOVE ? 0 : DELIVERY_CHARGE;
+    const serverTotal    = Math.max(0, afterDiscount + serverDelivery);
 
-    // ── 5. Build order update ────────────────────────────────
-    const orderUpdate = {
-      serverVerified:       true,
-      serverSubtotal:       Math.round(serverSubtotal),
-      serverDiscount:       Math.round(serverDiscount),
-      serverDeliveryCharge: serverDelivery,
-      serverTotal,
-      updatedAt: FieldValue.serverTimestamp(),
-    };
+    // ── 5. Compare with client total ─────────────────────────
+    const clientTotal = order.total || order.totalAmount || 0;
+    const diff        = Math.abs(serverTotal - clientTotal);
 
-    if (discrepancy > 5) {
+    if (diff > 5) {
       console.warn(
-        `[Order ${orderId}] Total tampered: submitted ₹${submittedTotal}, server ₹${serverTotal}. Correcting.`,
+        `[validateOrder] Price mismatch for order ${orderId}: client=${clientTotal}, server=${serverTotal} (diff=${diff.toFixed(2)})`,
       );
-      orderUpdate.total          = serverTotal;
-      orderUpdate.subtotal       = Math.round(serverSubtotal);
-      orderUpdate.discount       = Math.round(serverDiscount);
-      orderUpdate.deliveryCharge = serverDelivery;
-      orderUpdate.totalAdjusted  = true;
-      orderUpdate.originalTotal  = submittedTotal;
     }
 
-    await db.collection('orders').doc(orderId).update(orderUpdate);
+    // ── 6. Update order with server-computed values ──────────
+    await db.collection('orders').doc(orderId).update({
+      serverSubtotal,
+      serverDiscount,
+      serverDelivery,
+      serverTotal,
+      priceMismatch: diff > 5,
+    });
 
-    // ── 6. Mark coupon as used by this user ──────────────────
-    // Do this AFTER we've committed the order update so a crash here
-    // doesn't leave a paid order without the coupon discount recorded.
+    // ── 7. Mark coupon as used ───────────────────────────────
     if (couponDocId && serverDiscount > 0) {
       try {
         await db.collection('coupons').doc(couponDocId).update({
@@ -298,7 +282,7 @@ exports.validateAndProcessOrder = onDocumentCreated(
       }
     }
 
-    // ── 7. Deduct stock via batch write ──────────────────────
+    // ── 8. Deduct stock from storeInventory via batch write ──
     if (stockItems.length > 0) {
       const batch = db.batch();
       for (const { ref, currentStock, deductQty } of stockItems) {
@@ -308,6 +292,7 @@ exports.validateAndProcessOrder = onDocumentCreated(
         });
       }
       await batch.commit();
+      console.log(`[Stock] Deducted stock for order ${orderId} from storeInventory`);
     }
   }
 );
@@ -328,7 +313,6 @@ exports.notifyAdminOnNewOrder = onDocumentCreated(
     const orderNumber  = order.orderNumber  || orderId.slice(-6).toUpperCase();
     const totalAmount  = order.totalAmount  || order.total || 0;
 
-    // Fetch admin FCM tokens for this store
     let tokensQuery = db.collection('fcmTokens').where('role', '==', 'admin');
     if (storeId) tokensQuery = tokensQuery.where('storeId', '==', storeId);
 
@@ -389,8 +373,10 @@ exports.notifyAdminOnNewOrder = onDocumentCreated(
 );
 
 // ============================================================
-// TRIGGER 3: Notify USER on status change + restore stock on cancel
+// TRIGGER 3: Notify USER on status change + manage stock on
+//            cancel / delivered ↔ cancelled overrides
 // ============================================================
+// Stock operations now target storeInventory collection.
 exports.notifyUserOnStatusChange = onDocumentUpdated(
   'orders/{orderId}',
   async (event) => {
@@ -405,18 +391,20 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
     const orderNumber = after.orderNumber || orderId.slice(-6).toUpperCase();
     const prevStatus  = before.status;
     const items       = after.items;
+    const storeId     = after.storeId;
 
-    if (Array.isArray(items) && items.length > 0) {
+    if (Array.isArray(items) && items.length > 0 && storeId) {
 
-      // ── Case 1 & 3: restock on cancel ──────────────────────────────────────
+      // ── Case 1: restock on cancel (from any non-cancelled status) ──────
       if (newStatus === 'cancelled' && prevStatus !== 'cancelled') {
         try {
           const batch = db.batch();
           for (const item of items) {
-            const productSnap = await db.collection('products').doc(item.id).get();
-            if (productSnap.exists) {
-              const currentStock = productSnap.data().stock || 0;
-              batch.update(productSnap.ref, {
+            const siRef  = db.collection('storeInventory').doc(siDocId(storeId, item.id));
+            const siSnap = await siRef.get();
+            if (siSnap.exists) {
+              const currentStock = siSnap.data().stock || 0;
+              batch.update(siRef, {
                 stock:     currentStock + item.quantity,
                 updatedAt: FieldValue.serverTimestamp(),
               });
@@ -429,17 +417,16 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
         }
       }
 
-      // ── Case 2: deduct on cancelled → delivered (admin override) ───────────
-      // The order was previously cancelled (stock already restored at that time).
-      // Admin is now marking it as delivered, so consume the stock again.
+      // ── Case 2: deduct on cancelled → delivered (admin override) ──────
       if (prevStatus === 'cancelled' && newStatus === 'delivered') {
         try {
           const batch = db.batch();
           for (const item of items) {
-            const productSnap = await db.collection('products').doc(item.id).get();
-            if (productSnap.exists) {
-              const currentStock = productSnap.data().stock || 0;
-              batch.update(productSnap.ref, {
+            const siRef  = db.collection('storeInventory').doc(siDocId(storeId, item.id));
+            const siSnap = await siRef.get();
+            if (siSnap.exists) {
+              const currentStock = siSnap.data().stock || 0;
+              batch.update(siRef, {
                 stock:     Math.max(0, currentStock - item.quantity),
                 updatedAt: FieldValue.serverTimestamp(),
               });
@@ -452,9 +439,39 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
         }
       }
 
+      // ── Case 3: deduct on any-non-delivered → delivered ────────────────
+      // Normal flow: order moves through placed → confirmed → ... → delivered
+      // Stock was already deducted on order creation (TRIGGER 1).
+      // Only deduct again if coming FROM cancelled (handled in Case 2 above).
+      // No additional stock logic needed for normal delivery flow.
+
+      // ── Case 4: delivered → cancelled (admin override) ────────────────
+      // Stock was deducted when order was first created AND not restored
+      // (because it went through the normal flow to delivered).
+      // Now admin is cancelling a delivered order — restore stock.
+      if (prevStatus === 'delivered' && newStatus === 'cancelled') {
+        try {
+          const batch = db.batch();
+          for (const item of items) {
+            const siRef  = db.collection('storeInventory').doc(siDocId(storeId, item.id));
+            const siSnap = await siRef.get();
+            if (siSnap.exists) {
+              const currentStock = siSnap.data().stock || 0;
+              batch.update(siRef, {
+                stock:     currentStock + item.quantity,
+                updatedAt: FieldValue.serverTimestamp(),
+              });
+            }
+          }
+          await batch.commit();
+          console.log(`[Stock] Restocked for order ${orderId} (delivered → cancelled override)`);
+        } catch (err) {
+          console.error(`[Stock] Restock failed for order ${orderId}:`, err.message);
+        }
+      }
     }
 
-    // ── Send FCM notification to user ────────────────────────────────────────
+    // ── Send FCM notification to user ────────────────────────────────────
     const copy = STATUS_COPY[newStatus];
     if (!copy || !userId) return;
 
@@ -521,30 +538,24 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
 // ============================================================
 // SCHEDULED: Clean up FCM tokens older than 60 days
 // ============================================================
-// ✅ FCM CLEANUP FIX: Tokens are saved whenever a user logs in / browser
-// refreshes. Over time, old/uninstalled devices accumulate dead tokens that
-// waste quota on every multicast send. This job runs every Sunday at 2am
-// and deletes tokens that haven't been refreshed in 60 days.
-//
-// Firebase free tier allows 3 scheduled Cloud Functions — this counts as one.
-// It processes up to 500 tokens per run (safe batch limit for Firestore).
-exports.cleanupStaleFcmTokens = onSchedule('every sunday 02:00', async () => {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 60); // 60 days ago
+exports.cleanStaleFcmTokens = onSchedule(
+  { schedule: 'every 24 hours', timeZone: 'Asia/Kolkata' },
+  async () => {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 60);
 
-  const snap = await db.collection('fcmTokens')
-    .where('updatedAt', '<', cutoff)
-    .limit(500) // safety cap — re-runs next Sunday if there are more
-    .get();
+    const snap = await db.collection('fcmTokens')
+      .where('updatedAt', '<', cutoff)
+      .get();
 
-  if (snap.empty) {
-    console.log('[FCM Cleanup] No stale tokens found.');
-    return;
+    if (snap.empty) {
+      console.log('[FCM Cleanup] No stale tokens found.');
+      return;
+    }
+
+    const batch = db.batch();
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+    console.log(`[FCM Cleanup] Deleted ${snap.size} stale tokens.`);
   }
-
-  const batch = db.batch();
-  snap.docs.forEach((d) => batch.delete(d.ref));
-  await batch.commit();
-
-  console.log(`[FCM Cleanup] Deleted ${snap.docs.length} stale FCM tokens (older than 60 days).`);
-});
+);

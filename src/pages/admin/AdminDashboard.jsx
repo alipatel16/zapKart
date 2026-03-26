@@ -68,23 +68,26 @@ const AdminDashboard = () => {
 
         // Base constraints — scope to current store if one is selected
         const orderConstraints = [where('createdAt', '>=', startTs)];
-        const productConstraints = [where('active', '==', true)];
         const pendingConstraints = [where('status', '==', 'placed')];
         const recentConstraints = [orderBy('createdAt', 'desc')];
-        const lowStockConstraints = [where('stock', '<=', 5), where('active', '==', true)];
+
+        // ── CHANGED: product count + low stock now use STORE_INVENTORY ──
+        const productConstraints = [];
+        const lowStockConstraints = [where('stock', '<=', 5)];
 
         if (adminStore?.id) {
           orderConstraints.unshift(where('storeId', '==', adminStore.id));
-          productConstraints.unshift(where('storeId', '==', adminStore.id));
           pendingConstraints.unshift(where('storeId', '==', adminStore.id));
           recentConstraints.unshift(where('storeId', '==', adminStore.id));
+          productConstraints.push(where('storeId', '==', adminStore.id));
           lowStockConstraints.unshift(where('storeId', '==', adminStore.id));
         }
 
         const [ordersSnap, allOrdersSnap, productsSnap, pendingSnap, recentSnap] = await Promise.all([
           getCountFromServer(query(collection(db, COLLECTIONS.ORDERS), ...orderConstraints)),
           getDocs(query(collection(db, COLLECTIONS.ORDERS), ...orderConstraints)),
-          getCountFromServer(query(collection(db, COLLECTIONS.PRODUCTS), ...productConstraints)),
+          // ── CHANGED: count from storeInventory instead of products ──
+          getCountFromServer(query(collection(db, COLLECTIONS.STORE_INVENTORY), ...productConstraints)),
           getCountFromServer(query(collection(db, COLLECTIONS.ORDERS), ...pendingConstraints)),
           getDocs(query(collection(db, COLLECTIONS.ORDERS), ...recentConstraints, limit(8))),
         ]);
@@ -96,8 +99,8 @@ const AdminDashboard = () => {
           .filter((d) => d.data().paymentStatus === 'paid' || d.data().paymentMethod === 'cod')
           .reduce((sum, d) => sum + (d.data().total || 0), 0);
 
-        // Low stock — scoped to store
-        const invSnap = await getDocs(query(collection(db, COLLECTIONS.PRODUCTS), ...lowStockConstraints));
+        // ── CHANGED: low stock from storeInventory instead of products ──
+        const invSnap = await getDocs(query(collection(db, COLLECTIONS.STORE_INVENTORY), ...lowStockConstraints));
 
         setStats({
           orders: ordersSnap.data().count,

@@ -1,3 +1,10 @@
+// ============================================================
+// src/pages/admin/AdminProducts.jsx
+//
+// GLOBAL product catalog. Products are shared across all stores.
+// Fields: name, unit, categoryId, description, images, flags, active.
+// Price & stock are managed per-store via Purchases → storeInventory.
+// ============================================================
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box, Typography, Paper, Table, TableBody, TableCell, TableContainer,
@@ -10,22 +17,21 @@ import { Add, Edit, Delete, Search, CloudUpload } from '@mui/icons-material';
 import {
   collection, query, orderBy, getDocs, doc, addDoc, updateDoc,
   deleteDoc, serverTimestamp, limit, startAfter, getCountFromServer, where,
+  writeBatch,
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage, COLLECTIONS } from '../../firebase';
 import { ZAP_COLORS } from '../../theme';
-import { useStore } from '../../context/StoreContext';
 
 const PAGE_SIZE = 15;
 
 const EMPTY_PRODUCT = {
-  name: '', categoryId: '', description: '', mrp: '', discountedPrice: '',
-  unit: '', images: [], isFeatured: false, isExclusive: false,
+  name: '', categoryId: '', description: '', unit: '',
+  images: [], isFeatured: false, isExclusive: false,
   isNewArrival: false, active: true,
 };
 
 const AdminProducts = () => {
-  const { adminStore } = useStore();
   const [categories, setCategories] = useState([]);
   const [selectedCategoryTab, setSelectedCategoryTab] = useState('all');
   const [products, setProducts] = useState([]);
@@ -49,12 +55,12 @@ const AdminProducts = () => {
       .then((snap) => setCategories(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
   }, []);
 
+  // ── Fetch global products (no storeId filter) ──────────────────────────────
   const fetchProducts = useCallback(async (pageIndex = 0, categoryId = 'all') => {
     setLoading(true);
     try {
       const col = collection(db, COLLECTIONS.PRODUCTS);
       const constraints = [orderBy('name')];
-      if (adminStore?.id) constraints.unshift(where('storeId', '==', adminStore.id));
       if (categoryId !== 'all') constraints.unshift(where('categoryId', '==', categoryId));
 
       const countSnap = await getCountFromServer(query(col, ...constraints));
@@ -72,14 +78,13 @@ const AdminProducts = () => {
     } finally {
       setLoading(false);
     }
-  }, [adminStore?.id]);
+  }, []);
 
-  // Refetch whenever store or category tab changes
   useEffect(() => {
     cursorsRef.current = [null];
     setSearch('');
     fetchProducts(0, selectedCategoryTab);
-  }, [adminStore?.id, selectedCategoryTab]);
+  }, [selectedCategoryTab, fetchProducts]);
 
   const handleTabChange = (_, val) => {
     setSelectedCategoryTab(val);
@@ -98,8 +103,7 @@ const AdminProducts = () => {
 
   const openEdit = (p) => {
     setEditProduct(p);
-    const { stock, ...rest } = p;
-    setForm({ ...EMPTY_PRODUCT, ...rest });
+    setForm({ ...EMPTY_PRODUCT, ...p });
     setError('');
     setDialog(true);
   };
@@ -123,29 +127,59 @@ const AdminProducts = () => {
   const removeImage = (idx) =>
     setForm((prev) => ({ ...prev, images: prev.images.filter((_, i) => i !== idx) }));
 
+  // ── Save: create/update global product + sync storeInventory docs ──────────
   const handleSave = async () => {
-    if (!form.name || !form.categoryId || !form.mrp) {
-      setError('Please fill all required fields (Name, Category, MRP)');
+    if (!form.name || !form.categoryId) {
+      setError('Please fill all required fields (Name, Category)');
       return;
     }
     setSaving(true);
     setError('');
     try {
       const data = {
-        ...form,
-        storeId: adminStore?.id || null,
-        mrp: parseFloat(form.mrp),
-        discountedPrice: form.discountedPrice ? parseFloat(form.discountedPrice) : null,
+        name: form.name,
+        unit: form.unit || '',
+        categoryId: form.categoryId,
+        description: form.description || '',
+        images: form.images || [],
+        isFeatured: !!form.isFeatured,
+        isExclusive: !!form.isExclusive,
+        isNewArrival: !!form.isNewArrival,
+        active: form.active !== false,
         updatedAt: serverTimestamp(),
       };
+
       if (editProduct) {
         await updateDoc(doc(db, COLLECTIONS.PRODUCTS, editProduct.id), data);
-        setSuccessMsg('Product updated!');
+
+        // ── Sync denormalized fields to all storeInventory docs for this product ──
+        const siSnap = await getDocs(
+          query(collection(db, COLLECTIONS.STORE_INVENTORY), where('productId', '==', editProduct.id))
+        );
+        if (!siSnap.empty) {
+          const batch = writeBatch(db);
+          siSnap.docs.forEach((d) => {
+            batch.update(d.ref, {
+              name: data.name,
+              unit: data.unit,
+              categoryId: data.categoryId,
+              description: data.description,
+              images: data.images,
+              isFeatured: data.isFeatured,
+              isExclusive: data.isExclusive,
+              isNewArrival: data.isNewArrival,
+              active: data.active,
+              updatedAt: serverTimestamp(),
+            });
+          });
+          await batch.commit();
+        }
+
+        setSuccessMsg('Product updated globally!');
       } else {
-        data.stock = 0;
         data.createdAt = serverTimestamp();
         await addDoc(collection(db, COLLECTIONS.PRODUCTS), data);
-        setSuccessMsg('Product added! Add stock via Purchases.');
+        setSuccessMsg('Product added to catalog! Stores can now stock it via Purchases.');
       }
       setDialog(false);
       cursorsRef.current = [null];
@@ -159,14 +193,26 @@ const AdminProducts = () => {
   };
 
   const handleDelete = async (product) => {
-    if (!window.confirm(`Delete "${product.name}"? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete "${product.name}"? This removes it from the global catalog and all stores.`)) return;
     try {
+      // Delete product images from storage
       for (const url of product.images || []) {
         try { await deleteObject(ref(storage, url)); } catch {}
       }
+
+      // Delete all storeInventory docs for this product
+      const siSnap = await getDocs(
+        query(collection(db, COLLECTIONS.STORE_INVENTORY), where('productId', '==', product.id))
+      );
+      if (!siSnap.empty) {
+        const batch = writeBatch(db);
+        siSnap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
+
       await deleteDoc(doc(db, COLLECTIONS.PRODUCTS, product.id));
       setProducts((prev) => prev.filter((p) => p.id !== product.id));
-      setSuccessMsg('Product deleted!');
+      setSuccessMsg('Product deleted from catalog and all stores!');
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err) {
       setError(err.message);
@@ -174,10 +220,22 @@ const AdminProducts = () => {
   };
 
   const toggleActive = async (product) => {
+    const newActive = !product.active;
     await updateDoc(doc(db, COLLECTIONS.PRODUCTS, product.id), {
-      active: !product.active, updatedAt: serverTimestamp(),
+      active: newActive, updatedAt: serverTimestamp(),
     });
-    setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, active: !p.active } : p));
+
+    // Sync active flag to storeInventory
+    const siSnap = await getDocs(
+      query(collection(db, COLLECTIONS.STORE_INVENTORY), where('productId', '==', product.id))
+    );
+    if (!siSnap.empty) {
+      const batch = writeBatch(db);
+      siSnap.docs.forEach((d) => batch.update(d.ref, { active: newActive, updatedAt: serverTimestamp() }));
+      await batch.commit();
+    }
+
+    setProducts((prev) => prev.map((p) => p.id === product.id ? { ...p, active: newActive } : p));
   };
 
   const getCategoryName = (id) => categories.find((c) => c.id === id)?.name || '—';
@@ -207,48 +265,37 @@ const AdminProducts = () => {
     { key: 'isNewArrival', label: '🆕 New Arrival' },
   ];
 
-  const ProductRow = ({ product }) => (
+  // ── Product row ────────────────────────────────────────────────────────────
+  const ProductRow = ({ product, showCategory = true }) => (
     <TableRow hover>
       <TableCell>
         <Avatar src={product.images?.[0]} variant="rounded"
           sx={{ width: 40, height: 40, background: `${ZAP_COLORS.primary}10` }}>
-          {product.name?.[0]}
+          {product.name?.charAt(0)}
         </Avatar>
       </TableCell>
-      <TableCell sx={{ maxWidth: 160 }}>
-        <Typography variant="body2" noWrap fontWeight={600}>{product.name}</Typography>
-        {product.unit && <Typography variant="caption" color="text.secondary">{product.unit}</Typography>}
+      <TableCell>
+        <Typography variant="body2" fontWeight={600}>{product.name}</Typography>
+        <Typography variant="caption" color="text.secondary">{product.unit || '—'}</Typography>
       </TableCell>
-      {selectedCategoryTab === 'all' && (
-        <TableCell sx={{ fontSize: '0.78rem' }}>{getCategoryName(product.categoryId)}</TableCell>
+      {showCategory && (
+        <TableCell>
+          <Chip label={getCategoryName(product.categoryId)} size="small" variant="outlined" />
+        </TableCell>
       )}
-      <TableCell sx={{ fontSize: '0.78rem' }}>₹{product.mrp}</TableCell>
-      <TableCell sx={{ fontSize: '0.78rem', color: ZAP_COLORS.primary, fontWeight: 600 }}>
-        {product.discountedPrice ? `₹${product.discountedPrice}` : '—'}
-      </TableCell>
       <TableCell>
-        <Chip label={product.stock ?? 0} size="small" sx={{
-          fontSize: '0.72rem',
-          background: (product.stock ?? 0) <= 0 ? `${ZAP_COLORS.error}18`
-            : (product.stock ?? 0) <= 5 ? `${ZAP_COLORS.warning}18`
-            : `${ZAP_COLORS.accentGreen}18`,
-          color: (product.stock ?? 0) <= 0 ? ZAP_COLORS.error
-            : (product.stock ?? 0) <= 5 ? ZAP_COLORS.warning
-            : ZAP_COLORS.accentGreen,
-        }} />
-      </TableCell>
-      <TableCell>
-        <Box sx={{ display: 'flex', gap: 0.4, flexWrap: 'wrap' }}>
-          {product.isFeatured && <Chip label="⭐" size="small" sx={{ fontSize: '0.6rem', height: 16 }} />}
-          {product.isExclusive && <Chip label="💛" size="small" sx={{ fontSize: '0.6rem', height: 16 }} />}
-          {product.isNewArrival && <Chip label="🆕" size="small" sx={{ fontSize: '0.6rem', height: 16 }} />}
+        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+          {product.isFeatured && <Chip label="⭐" size="small" sx={{ height: 20 }} />}
+          {product.isExclusive && <Chip label="💛" size="small" sx={{ height: 20 }} />}
+          {product.isNewArrival && <Chip label="🆕" size="small" sx={{ height: 20 }} />}
+          {!product.isFeatured && !product.isExclusive && !product.isNewArrival && '—'}
         </Box>
       </TableCell>
       <TableCell>
-        <Switch size="small" checked={!product.active} onChange={() => toggleActive(product)} />
+        <Switch size="small" checked={product.active !== false} onChange={() => toggleActive(product)} />
       </TableCell>
       <TableCell>
-        <Box sx={{ display: 'flex', gap: 0.3 }}>
+        <Box sx={{ display: 'flex', gap: 0.5 }}>
           <IconButton size="small" onClick={() => openEdit(product)}><Edit fontSize="small" /></IconButton>
           <IconButton size="small" onClick={() => handleDelete(product)} sx={{ color: ZAP_COLORS.error }}>
             <Delete fontSize="small" />
@@ -258,10 +305,43 @@ const AdminProducts = () => {
     </TableRow>
   );
 
-  const TableHeader = ({ showCategory }) => (
+  // ── Mobile card ────────────────────────────────────────────────────────────
+  const ProductCard = ({ product }) => (
+    <Paper elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 2.5, p: 1.5, mb: 1.5 }}>
+      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
+        <Avatar src={product.images?.[0]} variant="rounded"
+          sx={{ width: 48, height: 48, background: `${ZAP_COLORS.primary}10` }}>
+          {product.name?.charAt(0)}
+        </Avatar>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="body2" fontWeight={700} noWrap>{product.name}</Typography>
+              <Typography variant="caption" color="text.secondary">{product.unit || '—'}</Typography>
+            </Box>
+            <Switch size="small" checked={product.active !== false} onChange={() => toggleActive(product)} />
+          </Box>
+          <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Chip label={getCategoryName(product.categoryId)} size="small" variant="outlined" sx={{ height: 20, fontSize: '0.68rem' }} />
+            {product.isFeatured && <Chip label="⭐ Featured" size="small" sx={{ height: 20, fontSize: '0.68rem' }} />}
+            {product.isExclusive && <Chip label="💛 Exclusive" size="small" sx={{ height: 20, fontSize: '0.68rem' }} />}
+            {product.isNewArrival && <Chip label="🆕 New" size="small" sx={{ height: 20, fontSize: '0.68rem' }} />}
+          </Box>
+          <Box sx={{ display: 'flex', gap: 0.5, mt: 1 }}>
+            <Button size="small" variant="outlined" startIcon={<Edit />} onClick={() => openEdit(product)}
+              sx={{ fontSize: '0.7rem', py: 0.25, borderRadius: 1.5 }}>Edit</Button>
+            <Button size="small" variant="outlined" color="error" startIcon={<Delete />} onClick={() => handleDelete(product)}
+              sx={{ fontSize: '0.7rem', py: 0.25, borderRadius: 1.5 }}>Delete</Button>
+          </Box>
+        </Box>
+      </Box>
+    </Paper>
+  );
+
+  const TableHeader = ({ showCategory = true }) => (
     <TableHead>
       <TableRow sx={{ background: `${ZAP_COLORS.primary}08` }}>
-        {['Image', 'Name', ...(showCategory ? ['Category'] : []), 'MRP', 'Sale Price', 'Stock', 'Flags', 'Active', 'Actions'].map((h) => (
+        {['', 'Product', ...(showCategory ? ['Category'] : []), 'Flags', 'Active', 'Actions'].map((h) => (
           <TableCell key={h} sx={{ fontWeight: 700, fontSize: '0.78rem', color: ZAP_COLORS.textSecondary }}>{h}</TableCell>
         ))}
       </TableRow>
@@ -271,7 +351,10 @@ const AdminProducts = () => {
   return (
     <Box sx={{ p: { xs: 2, sm: 3 } }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h5" fontWeight={800} sx={{ fontFamily: "'Syne', sans-serif" }}>Products</Typography>
+        <Box>
+          <Typography variant="h5" fontWeight={800} sx={{ fontFamily: "'Syne', sans-serif" }}>Products</Typography>
+          <Typography variant="caption" color="text.secondary">Global catalog — shared across all stores</Typography>
+        </Box>
         <Button variant="contained" startIcon={<Add />} onClick={openAdd}>Add Product</Button>
       </Box>
 
@@ -279,7 +362,8 @@ const AdminProducts = () => {
       {error && <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>{error}</Alert>}
 
       <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
-        📦 Stock is managed automatically via <strong>Purchases</strong> (adds stock) and <strong>Orders</strong> (deducts/restores stock).
+        📦 This is the <strong>global product catalog</strong>. Price &amp; stock are managed per-store via <strong>Purchases</strong>.
+        Each store sets its own MRP, Sell Rate &amp; stock when recording a purchase.
       </Alert>
 
       {/* Category tabs */}
@@ -311,91 +395,76 @@ const AdminProducts = () => {
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}><CircularProgress /></Box>
       ) : selectedCategoryTab === 'all' ? (
-        // ── Grouped by category view ─────────────────────────────────────
         <Box>
           {groupedByCategory?.length === 0 && orphanProducts.length === 0 && (
             <Paper elevation={0} sx={{ border: `1px dashed ${ZAP_COLORS.border}`, borderRadius: 3, p: 4, textAlign: 'center' }}>
-              <Typography color="text.secondary">No products found. Add your first product!</Typography>
+              <Typography color="text.secondary">No products found. Click "Add Product" to create your first catalog item.</Typography>
             </Paper>
           )}
-
           {groupedByCategory?.map(({ category, products: catProducts }) => (
             <Box key={category.id} sx={{ mb: 3 }}>
-              {/* Category header */}
-              <Box sx={{
-                display: 'flex', alignItems: 'center', gap: 1.5, mb: 1,
-                px: 1.5, py: 1, borderRadius: 2,
-                background: `${ZAP_COLORS.primary}08`,
-                border: `1px solid ${ZAP_COLORS.primary}15`,
-              }}>
-                {category.imageUrl && (
-                  <Box component="img" src={category.imageUrl} alt=""
-                    sx={{ width: 28, height: 28, borderRadius: 1, objectFit: 'cover' }} />
-                )}
-                <Typography variant="subtitle2" fontWeight={700} sx={{ color: ZAP_COLORS.primary }}>
-                  {category.name}
-                </Typography>
-                <Chip label={`${catProducts.length} product${catProducts.length !== 1 ? 's' : ''}`}
-                  size="small" sx={{ fontSize: '0.68rem', height: 18, background: `${ZAP_COLORS.primary}15`, color: ZAP_COLORS.primary }} />
-                <Button size="small" startIcon={<Add sx={{ fontSize: '14px !important' }} />}
-                  onClick={() => {
-                    setForm({ ...EMPTY_PRODUCT, categoryId: category.id });
-                    setEditProduct(null); setError(''); setDialog(true);
-                  }}
-                  sx={{ ml: 'auto', fontSize: '0.72rem' }}>
-                  Add to {category.name}
-                </Button>
+              <Typography variant="subtitle1" fontWeight={700} mb={1}>{category.name} ({catProducts.length})</Typography>
+
+              {/* Desktop table */}
+              <Box sx={{ display: { xs: 'none', md: 'block' } }}>
+                <TableContainer component={Paper} elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3 }}>
+                  <Table size="small">
+                    <TableHeader showCategory={false} />
+                    <TableBody>
+                      {catProducts.map((product) => <ProductRow key={product.id} product={product} showCategory={false} />)}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
               </Box>
 
-              <TableContainer component={Paper} elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 2 }}>
-                <Table size="small">
-                  <TableHeader showCategory={false} />
-                  <TableBody>
-                    {catProducts.map((product) => <ProductRow key={product.id} product={product} />)}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+              {/* Mobile cards */}
+              <Box sx={{ display: { xs: 'block', md: 'none' } }}>
+                {catProducts.map((product) => <ProductCard key={product.id} product={product} />)}
+              </Box>
             </Box>
           ))}
-
-          {/* Orphan products (no category match) */}
           {orphanProducts.length > 0 && (
             <Box sx={{ mb: 3 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, px: 1.5, py: 1, borderRadius: 2, background: `${ZAP_COLORS.warning}08`, border: `1px solid ${ZAP_COLORS.warning}20` }}>
-                <Typography variant="subtitle2" fontWeight={700} sx={{ color: ZAP_COLORS.warning }}>⚠️ Uncategorised</Typography>
-                <Chip label={orphanProducts.length} size="small" sx={{ fontSize: '0.68rem', height: 18 }} />
+              <Typography variant="subtitle1" fontWeight={700} mb={1}>Uncategorized ({orphanProducts.length})</Typography>
+              <Box sx={{ display: { xs: 'none', md: 'block' } }}>
+                <TableContainer component={Paper} elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3 }}>
+                  <Table size="small">
+                    <TableHeader showCategory />
+                    <TableBody>
+                      {orphanProducts.map((product) => <ProductRow key={product.id} product={product} />)}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
               </Box>
-              <TableContainer component={Paper} elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 2 }}>
-                <Table size="small">
-                  <TableHeader showCategory={true} />
-                  <TableBody>
-                    {orphanProducts.map((product) => <ProductRow key={product.id} product={product} />)}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+              <Box sx={{ display: { xs: 'block', md: 'none' } }}>
+                {orphanProducts.map((product) => <ProductCard key={product.id} product={product} />)}
+              </Box>
             </Box>
           )}
         </Box>
+      ) : filteredProducts.length === 0 ? (
+        <Paper elevation={0} sx={{ border: `1px dashed ${ZAP_COLORS.border}`, borderRadius: 3, p: 4, textAlign: 'center' }}>
+          <Typography color="text.secondary" mb={2}>No products in this category yet.</Typography>
+          <Button variant="outlined" startIcon={<Add />} onClick={openAdd}>Add Product</Button>
+        </Paper>
       ) : (
-        // ── Single category filtered view with pagination ─────────────────
         <Box>
-          {filteredProducts.length === 0 ? (
-            <Paper elevation={0} sx={{ border: `1px dashed ${ZAP_COLORS.border}`, borderRadius: 3, p: 4, textAlign: 'center' }}>
-              <Typography color="text.secondary" mb={2}>No products in this category yet.</Typography>
-              <Button variant="outlined" startIcon={<Add />} onClick={openAdd}>Add Product</Button>
-            </Paper>
-          ) : (
+          {/* Desktop table */}
+          <Box sx={{ display: { xs: 'none', md: 'block' } }}>
             <TableContainer component={Paper} elevation={0} sx={{ border: `1px solid ${ZAP_COLORS.border}`, borderRadius: 3 }}>
               <Table size="small">
                 <TableHeader showCategory={false} />
                 <TableBody>
-                  {filteredProducts.map((product) => <ProductRow key={product.id} product={product} />)}
+                  {filteredProducts.map((product) => <ProductRow key={product.id} product={product} showCategory={false} />)}
                 </TableBody>
               </Table>
             </TableContainer>
-          )}
+          </Box>
+          {/* Mobile cards */}
+          <Box sx={{ display: { xs: 'block', md: 'none' } }}>
+            {filteredProducts.map((product) => <ProductCard key={product.id} product={product} />)}
+          </Box>
 
-          {/* Pagination for single-category view */}
           {totalPages > 1 && (
             <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1, mt: 3, alignItems: 'center' }}>
               <Button size="small" variant="outlined" disabled={page === 0}
@@ -408,7 +477,7 @@ const AdminProducts = () => {
         </Box>
       )}
 
-      {/* Add/Edit Dialog */}
+      {/* ── Add/Edit Dialog ─────────────────────────────────────────────────── */}
       <Dialog open={dialog} onClose={() => setDialog(false)} maxWidth="md" fullWidth>
         <DialogTitle fontWeight={700}>{editProduct ? 'Edit Product' : 'Add New Product'}</DialogTitle>
         <DialogContent dividers>
@@ -442,7 +511,7 @@ const AdminProducts = () => {
                 size="small" fullWidth />
             </Grid>
             <Grid item xs={12} sm={4}>
-              <TextField label="Unit (e.g. 500g, 1L)" value={form.unit}
+              <TextField label="Unit (e.g. 500g, 1L, 180ML)" value={form.unit}
                 onChange={(e) => setForm((p) => ({ ...p, unit: e.target.value }))}
                 size="small" fullWidth />
             </Grid>
@@ -457,23 +526,11 @@ const AdminProducts = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} sm={3}>
-              <TextField label="MRP (₹) *" type="number" value={form.mrp}
-                onChange={(e) => setForm((p) => ({ ...p, mrp: e.target.value }))}
-                size="small" fullWidth
-                InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }} />
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              <TextField label="Sale Price (₹)" type="number" value={form.discountedPrice}
-                onChange={(e) => setForm((p) => ({ ...p, discountedPrice: e.target.value }))}
-                size="small" fullWidth
-                InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }}
-                helperText="Leave empty if no discount" />
-            </Grid>
 
             <Grid item xs={12}>
               <Alert severity="info" sx={{ borderRadius: 2, py: 0.5 }}>
-                Stock is managed by <strong>Purchases</strong> (adds stock) and <strong>Orders</strong> (deducts/restores). View stock on the <strong>Inventory</strong> page.
+                💰 <strong>Price &amp; Stock</strong> are set per-store when recording a <strong>Purchase</strong>.
+                This form only manages the product's catalog info (name, unit, category, images).
               </Alert>
             </Grid>
 
