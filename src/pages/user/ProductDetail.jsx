@@ -4,6 +4,8 @@
 // UPDATED: Fetches product from storeInventory (has pricing/stock)
 // with fallback to global products catalog.
 // Related products also fetched from storeInventory.
+// FIX: Added "Go to Cart" button when item is in cart.
+// FIX: Related products increased to 8, page enriched with info strip.
 // ============================================================
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -11,7 +13,7 @@ import {
   Box, Container, Typography, Button, Chip, Skeleton,
   IconButton, Divider, Grid, Alert,
 } from '@mui/material';
-import { Add, Remove, ArrowBack } from '@mui/icons-material';
+import { Add, Remove, ArrowBack, ShoppingCart } from '@mui/icons-material';
 import { doc, getDoc, collection, query, where, limit, getDocs } from 'firebase/firestore';
 import { db, COLLECTIONS } from '../../firebase';
 import { useCart } from '../../context/CartContext';
@@ -89,7 +91,7 @@ const ProductDetail = () => {
 
         if (data) {
           setProduct(data);
-          // ── Fetch related from storeInventory ──
+          // ── Fetch up to 9 related from storeInventory (we'll filter self, show 8) ──
           if (storeId && data.categoryId) {
             const relSnap = await getDocs(
               query(
@@ -97,7 +99,7 @@ const ProductDetail = () => {
                 where('storeId', '==', storeId),
                 where('categoryId', '==', data.categoryId),
                 where('active', '==', true),
-                limit(5)
+                limit(9)
               )
             );
             setRelated(relSnap.docs.map(mapSIDoc).filter((p) => p.id !== id));
@@ -230,7 +232,7 @@ const ProductDetail = () => {
               <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }}>Only {product.stock} left in stock!</Alert>
             ) : null}
 
-            {/* Add to cart */}
+            {/* Add to cart / Qty controls */}
             <Box sx={{ mb: 3 }}>
               {!inCart ? (
                 <Box
@@ -255,21 +257,50 @@ const ProductDetail = () => {
                   {product.stock <= 0 ? 'Out of Stock' : 'Add to Cart'}
                 </Box>
               ) : (
-                <Box sx={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  border: `2px solid ${ZAP_COLORS.primary}`, borderRadius: 3, overflow: 'hidden',
-                }}>
-                  <IconButton onClick={() => qty <= 1 ? removeFromCart(product.id) : updateQuantity(product.id, qty - 1)}
-                    sx={{ borderRadius: 0, py: 1.5, px: 3 }}>
-                    <Remove />
-                  </IconButton>
-                  <Typography fontWeight={800} fontSize="1.2rem" sx={{ px: 3, minWidth: 48, textAlign: 'center' }}>
-                    {qty}
-                  </Typography>
-                  <IconButton onClick={() => updateQuantity(product.id, qty + 1)}
-                    sx={{ borderRadius: 0, py: 1.5, px: 3 }}>
-                    <Add />
-                  </IconButton>
+                /* ── FIX: Qty row + "Go to Cart" button side by side ── */
+                <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+                  {/* Qty stepper */}
+                  <Box sx={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    border: `2px solid ${ZAP_COLORS.primary}`, borderRadius: 3, overflow: 'hidden',
+                    flex: '0 0 auto',
+                  }}>
+                    <IconButton
+                      onClick={() => qty <= 1 ? removeFromCart(product.id) : updateQuantity(product.id, qty - 1)}
+                      sx={{ borderRadius: 0, py: 1.5, px: 2.5 }}
+                    >
+                      <Remove />
+                    </IconButton>
+                    <Typography fontWeight={800} fontSize="1.2rem" sx={{ px: 2.5, minWidth: 40, textAlign: 'center' }}>
+                      {qty}
+                    </Typography>
+                    <IconButton
+                      onClick={() => updateQuantity(product.id, qty + 1)}
+                      sx={{ borderRadius: 0, py: 1.5, px: 2.5 }}
+                    >
+                      <Add />
+                    </IconButton>
+                  </Box>
+
+                  {/* Go to Cart */}
+                  <Box
+                    onClick={() => navigate('/cart')}
+                    sx={{
+                      flex: 1,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1,
+                      py: 1.7, borderRadius: 3, cursor: 'pointer',
+                      background: `linear-gradient(135deg, ${ZAP_COLORS.primary} 0%, ${ZAP_COLORS.primaryDark} 100%)`,
+                      color: '#fff',
+                      fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: '1rem', letterSpacing: '0.04em',
+                      boxShadow: `0 6px 20px ${ZAP_COLORS.primary}45`,
+                      transition: 'all 0.2s cubic-bezier(0.34,1.56,0.64,1)',
+                      '&:hover': { transform: 'scale(1.015)', boxShadow: `0 8px 24px ${ZAP_COLORS.primary}55` },
+                      '&:active': { transform: 'scale(0.97)' },
+                    }}
+                  >
+                    <ShoppingCart sx={{ fontSize: 20 }} />
+                    Go to Cart
+                  </Box>
                 </Box>
               )}
             </Box>
@@ -284,24 +315,41 @@ const ProductDetail = () => {
 
             <Divider sx={{ mb: 2 }} />
 
-            {/* Delivery info */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography variant="body2" color="text.secondary">🛵</Typography>
-              <Typography variant="body2" color="text.secondary">
-                Free delivery on orders above ₹{process.env.REACT_APP_FREE_DELIVERY_ABOVE || 299}.
-              </Typography>
-            </Box>
+            {/* Delivery & service highlights */}
+            <Grid container spacing={1.5}>
+              {[
+                { icon: '🛵', title: 'Free Delivery', sub: `On orders above ₹${process.env.REACT_APP_FREE_DELIVERY_ABOVE || 299}` },
+                { icon: '⚡', title: 'Express Delivery', sub: 'Delivered in minutes' },
+                { icon: '↩️', title: 'Easy Returns', sub: 'Hassle-free returns' },
+                { icon: '✅', title: 'Quality Assured', sub: 'Fresh & genuine products' },
+              ].map((item) => (
+                <Grid item xs={6} key={item.title}>
+                  <Box sx={{
+                    display: 'flex', alignItems: 'flex-start', gap: 1,
+                    p: 1.2, borderRadius: 2,
+                    background: `${ZAP_COLORS.primary}06`,
+                    border: `1px solid ${ZAP_COLORS.border}`,
+                  }}>
+                    <Typography fontSize="1.2rem" lineHeight={1}>{item.icon}</Typography>
+                    <Box>
+                      <Typography variant="caption" fontWeight={700} display="block" lineHeight={1.2}>{item.title}</Typography>
+                      <Typography variant="caption" color="text.secondary" lineHeight={1.3}>{item.sub}</Typography>
+                    </Box>
+                  </Box>
+                </Grid>
+              ))}
+            </Grid>
           </Grid>
         </Grid>
 
-        {/* Related products */}
+        {/* Related products — show up to 8 */}
         {related.length > 0 && (
           <Box sx={{ mt: 5 }}>
             <Typography variant="h6" fontWeight={700} mb={2} sx={{ fontFamily: "'Syne', sans-serif" }}>
               You may also like
             </Typography>
             <Grid container spacing={{ xs: 1.5, sm: 2 }}>
-              {related.slice(0, 4).map((p) => (
+              {related.slice(0, 8).map((p) => (
                 <Grid item xs={6} sm={4} md={3} key={p.id}>
                   <ProductCard product={p} />
                 </Grid>

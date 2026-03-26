@@ -88,7 +88,19 @@ const CategoryScroll = ({ categories, loading }) => {
               : <Box sx={{ fontSize: '1.6rem' }}>{emojis[i % emojis.length]}</Box>
             }
           </Box>
-          <Typography variant="caption" sx={{ fontWeight: 500, fontSize: '0.68rem', lineHeight: 1.2, display: 'block' }} noWrap>
+          {/* FIX: removed noWrap — long names now wrap to a second line instead of being clipped */}
+          <Typography
+            variant="caption"
+            sx={{
+              fontWeight: 500,
+              fontSize: '0.68rem',
+              lineHeight: 1.2,
+              display: 'block',
+              textAlign: 'center',
+              whiteSpace: 'normal',
+              wordBreak: 'break-word',
+            }}
+          >
             {cat.name}
           </Typography>
         </Box>
