@@ -464,15 +464,17 @@ exports.notifyAdminOnNewOrder = onDocumentCreated(
       },
       webpush: {
         notification: {
-          icon:    '/logo192.png',
-          badge:   '/badge-72.png',
-          tag:     `new-order-${orderId}`,
-          actions: JSON.stringify([
-            { action: 'view',    title: '📋 View Order' },
-            { action: 'dismiss', title: '✕ Dismiss'    },
-          ]),
+          icon:     '/logo192.png',
+          badge:    '/badge-72.png',
+          tag:      `order-tracking-${orderId}`,
+          renotify: true,                // ← boolean
+          vibrate:  [200, 100, 200],     // ← number array
+          actions: [                     // ← raw array, no JSON.stringify
+            { action: 'track',   title: '📦 Track Order' },
+            { action: 'dismiss', title: '✕ Dismiss'      },
+          ],
         },
-        fcm_options: { link: '/admin/orders' },
+        fcm_options: { link: '/orders' },
       },
     };
 
@@ -578,22 +580,22 @@ exports.notifyUserOnStatusChange = onDocumentUpdated(
           icon:     '/logo192.png',
           badge:    '/badge-72.png',
           tag:      `order-tracking-${orderId}`,
-          renotify: 'true',
-          vibrate:  '[200,100,200]',
-          actions: JSON.stringify([
+          renotify: true,
+          vibrate:  [200, 100, 200],
+          actions: [
             { action: 'track',   title: '📦 Track Order' },
             { action: 'dismiss', title: '✕ Dismiss'      },
-          ]),
+          ],
         },
         fcm_options: { link: '/orders' },
       },
-      android: {
-        notification: {
-          icon:        'notification_icon',
-          color:       '#FF6B35',
-          click_action: 'FLUTTER_NOTIFICATION_CLICK',
-        },
-      },
+      // android: {
+      //   notification: {
+      //     icon:        'notification_icon',
+      //     color:       '#FF6B35',
+      //     click_action: 'FLUTTER_NOTIFICATION_CLICK',
+      //   },
+      // },
     };
 
     try {

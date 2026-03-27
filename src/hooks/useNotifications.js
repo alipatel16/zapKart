@@ -5,13 +5,23 @@ import { useEffect, useCallback, useRef } from 'react';
 import { getMessaging, getToken, onMessage } from 'firebase/messaging';
 import {
   doc, setDoc, serverTimestamp, collection, query,
-  where, getDocs, deleteDoc,
+  where, getDocs, deleteDoc, orderBy, limit, onSnapshot,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth }  from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 
 const VAPID_KEY = process.env.REACT_APP_FIREBASE_VAPID_KEY || '';
+
+// ── Status copy map (mirrors Cloud Function) ──────────────────
+const USER_STATUS_COPY = {
+  confirmed:  { emoji: '✅', title: 'Order Confirmed!',      body: 'Your order has been confirmed and is being prepared.' },
+  processing: { emoji: '⚙️', title: 'Preparing Your Order',  body: 'Your order is being carefully packed right now.' },
+  packed:     { emoji: '📦', title: 'Order Packed!',         body: 'Your order is packed and waiting for pickup.' },
+  enroute:    { emoji: '🛵', title: 'Out for Delivery!',     body: 'Your order is on the way! Should reach you very soon.' },
+  delivered:  { emoji: '🎉', title: 'Order Delivered!',      body: 'Your order has been delivered. Enjoy! 🙏' },
+  cancelled:  { emoji: '❌', title: 'Order Cancelled',       body: 'Your order has been cancelled. Contact us if this was a mistake.' },
+};
 
 // ── tiny helper: play a sound file from /public/sounds/ ──────
 const playNotificationSound = (src = '/sounds/order-alert.mp3') => {
@@ -24,6 +34,26 @@ const playNotificationSound = (src = '/sounds/order-alert.mp3') => {
   } catch (e) {
     console.warn('[Sound] Could not play notification sound:', e.message);
   }
+};
+
+// ── Show an OS notification via the SW ───────────────────────
+const showUserOSNotification = (title, body, orderId) => {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  navigator.serviceWorker.ready.then((reg) => {
+    reg.showNotification(title, {
+      body,
+      icon:     '/logo192.png',
+      badge:    '/badge-72.png',
+      tag:      `order-tracking-${orderId}`,
+      renotify: true,
+      vibrate:  [200, 100, 200],
+      data:     { url: '/orders', orderId, type: 'order_tracking' },
+      actions: [
+        { action: 'track',   title: '📦 Track Order' },
+        { action: 'dismiss', title: '✕ Dismiss'      },
+      ],
+    });
+  }).catch(() => {});
 };
 
 export const useNotifications = () => {
@@ -110,10 +140,70 @@ export const useNotifications = () => {
     if (Notification.permission === 'granted') {
       requestPermission(); // refresh / re-save token
     }
-  }, [user?.uid, resolvedStoreId]); // re-run when admin switches store
+  }, [user?.uid, resolvedStoreId, requestPermission]);
+
+  // ── Firestore realtime listener for USER order status changes ──
+  // This mirrors how admin gets notified via onSnapshot — works whether
+  // the tab is open, in background, or the FCM foreground suppression
+  // kicks in on Android. FCM is now just a backup for when tab is closed.
+  useEffect(() => {
+    if (!user || resolvedRole !== 'user') return;
+
+    const q = query(
+      collection(db, 'orders'),
+      where('userId', '==', user.uid),
+      orderBy('createdAt', 'desc'),
+      limit(5)
+    );
+
+    // Cache of orderId → last known status (seeded on first snapshot)
+    const statusCache = {};
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      snapshot.docs.forEach((docSnap) => {
+        const order = docSnap.data();
+        const curr  = order.status;
+        const prev  = statusCache[docSnap.id];
+
+        // Seed on first load — don't fire notifications for existing statuses
+        if (prev === undefined) {
+          statusCache[docSnap.id] = curr;
+          return;
+        }
+
+        // Status hasn't changed — nothing to do
+        if (prev === curr) return;
+
+        // Status changed — update cache
+        statusCache[docSnap.id] = curr;
+
+        const copy = USER_STATUS_COPY[curr];
+        if (!copy) return;
+
+        const title = `${copy.emoji} ${copy.title}`;
+        const body  = copy.body;
+
+        console.log(`[UserNotify] Order ${docSnap.id} status changed: ${prev} → ${curr}`);
+
+        // ── Show OS notification (works in background & foreground) ──
+        showUserOSNotification(title, body, docSnap.id);
+
+        // ── Dispatch event so OrderHistory refreshes live ──
+        window.dispatchEvent(new CustomEvent('zap:order-status-changed', {
+          detail: { orderId: docSnap.id, status: curr },
+        }));
+      });
+    }, (err) => {
+      console.error('[UserNotify] onSnapshot error:', err.message);
+    });
+
+    return () => unsub();
+  }, [user?.uid, resolvedRole]);
 
   // ── Foreground FCM messages (tab is OPEN & active) ───────
   // Branches on data.type to handle admin and user notifications separately.
+  // Note: for users, the onSnapshot above already handles foreground toasts.
+  // The FCM handler here is a safety net for when the tab is NOT focused.
   useEffect(() => {
     if (!user || !('Notification' in window)) return;
     let unsub;
@@ -124,28 +214,10 @@ export const useNotifications = () => {
         const data = payload.data || {};
 
         // ── User: order tracking / delivery status update ───────────────────
-        // Shows a quiet notification and fires a custom DOM event so
-        // OrderHistory can refresh its list live without a manual pull.
-        // Does NOT play the loud order-alert sound — that's for admins only.
+        // onSnapshot above handles the foreground case for users.
+        // This FCM handler is kept as a fallback only.
         if (data.type === 'order_tracking') {
-          if (Notification.permission === 'granted') {
-            navigator.serviceWorker.ready.then((registration) => {
-              registration.showNotification(title || '📦 Order Update', {
-                body:     body || 'Your order status has been updated.',
-                icon:     '/logo192.png',
-                tag:      `order-tracking-${data.orderId}`,
-                renotify: true,
-                data:     { url: '/orders', orderId: data.orderId, type: 'order_tracking' },
-              });
-            }).catch(() => {
-              try {
-                const n = new Notification(title || '📦 Order Update', { body, icon: '/logo192.png' });
-                n.onclick = () => { window.focus(); window.location.href = '/orders'; };
-              } catch { /* ignore */ }
-            });
-          }
-
-          // Dispatch custom event so OrderHistory.jsx can refresh live
+          // Dispatch event so OrderHistory can refresh
           window.dispatchEvent(new CustomEvent('zap:order-status-changed', {
             detail: { orderId: data.orderId, status: data.status },
           }));
