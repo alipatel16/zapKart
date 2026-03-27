@@ -28,15 +28,109 @@ const playNotificationSound = (src = '/sounds/order-alert.mp3') => {
   try {
     const audio = new Audio(src);
     audio.volume = 0.8;
-    audio.play().catch((e) => {
-      console.warn('[Sound] Autoplay blocked:', e.message);
-    });
+    audio.play().catch((e) => console.warn('[Sound] Autoplay blocked:', e.message));
   } catch (e) {
     console.warn('[Sound] Could not play notification sound:', e.message);
   }
 };
 
-// ── Show an OS notification via the SW ───────────────────────
+// ── In-app toast for users (shown when tab is ACTIVE) ────────
+// Shown at top-center of screen, auto-dismisses after 5s.
+// No OS permission needed. Tapping navigates to /orders.
+const USER_TOAST_CONTAINER_ID = 'zap-user-toast-container';
+
+const showUserInAppToast = (title, body) => {
+  // Inject animation styles once
+  if (!document.getElementById('zap-user-toast-styles')) {
+    const style = document.createElement('style');
+    style.id = 'zap-user-toast-styles';
+    style.textContent = `
+      @keyframes zapUserToastIn {
+        from { opacity: 0; transform: translateY(-16px) scale(0.96); }
+        to   { opacity: 1; transform: translateY(0)    scale(1);    }
+      }
+      @keyframes zapUserToastOut {
+        from { opacity: 1; transform: translateY(0)    scale(1);    }
+        to   { opacity: 0; transform: translateY(-10px) scale(0.95); }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // Get or create container (top-center)
+  let container = document.getElementById(USER_TOAST_CONTAINER_ID);
+  if (!container) {
+    container = document.createElement('div');
+    container.id = USER_TOAST_CONTAINER_ID;
+    container.style.cssText = `
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 999999;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+      min-width: 280px;
+      max-width: 340px;
+      width: 90vw;
+    `;
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement('div');
+  toast.style.cssText = `
+    background: #1a1a1a;
+    color: #fff;
+    border-radius: 14px;
+    padding: 13px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.22), 0 2px 8px rgba(0,0,0,0.12);
+    pointer-events: all;
+    cursor: pointer;
+    animation: zapUserToastIn 0.35s cubic-bezier(0.22,1,0.36,1) both;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  `;
+
+  // Split emoji from title text
+  const emojiMatch = title.match(/^(\S+)\s(.+)$/);
+  const emoji      = emojiMatch ? emojiMatch[1] : '📦';
+  const titleText  = emojiMatch ? emojiMatch[2] : title;
+
+  toast.innerHTML = `
+    <div style="font-size:22px;line-height:1;flex-shrink:0;margin-top:1px;">${emoji}</div>
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:13px;font-weight:600;line-height:1.3;margin-bottom:3px;">${titleText}</div>
+      <div style="font-size:12px;opacity:0.72;line-height:1.4;">${body}</div>
+    </div>
+    <div style="font-size:15px;opacity:0.45;flex-shrink:0;margin-top:1px;line-height:1;">✕</div>
+  `;
+
+  const dismiss = () => {
+    toast.style.animation = 'zapUserToastOut 0.25s ease forwards';
+    setTimeout(() => {
+      toast.remove();
+      const c = document.getElementById(USER_TOAST_CONTAINER_ID);
+      if (c && c.children.length === 0) c.remove();
+    }, 250);
+  };
+
+  toast.onclick = () => {
+    dismiss();
+    window.location.href = '/orders';
+  };
+
+  container.appendChild(toast);
+
+  // Auto-dismiss after 5 seconds
+  const timer = setTimeout(dismiss, 5000);
+  toast.addEventListener('click', () => clearTimeout(timer), { once: true });
+};
+
+// ── OS notification via SW (only used when tab is BACKGROUNDED) ──
 const showUserOSNotification = (title, body, orderId) => {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   navigator.serviceWorker.ready.then((reg) => {
@@ -102,14 +196,10 @@ export const useNotifications = () => {
       // ✅ Do NOT call navigator.serviceWorker.register() here.
       // That creates a second competing registration on Android and causes
       // FCM tokens to be tied to the wrong SW scope, breaking push on Samsung.
-      //
-      // Instead, wait for the already-registered SW (registered in index.js
-      // via serviceWorkerRegistration.js) to become active, then use it.
       let swRegistration;
       try {
         swRegistration = await navigator.serviceWorker.ready;
       } catch {
-        // Fallback: explicitly register the messaging SW
         swRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
       }
 
@@ -143,9 +233,15 @@ export const useNotifications = () => {
   }, [user?.uid, resolvedStoreId, requestPermission]);
 
   // ── Firestore realtime listener for USER order status changes ──
-  // This mirrors how admin gets notified via onSnapshot — works whether
-  // the tab is open, in background, or the FCM foreground suppression
-  // kicks in on Android. FCM is now just a backup for when tab is closed.
+  //
+  // Behaviour by tab state:
+  //   ACTIVE     → in-app toast (dark pill at top of screen, like iOS)
+  //                No OS notification — avoids Chrome spam flag
+  //   BACKGROUND → OS notification via SW
+  //                tag deduplication prevents double-fire with FCM SW
+  //   CLOSED     → SW onBackgroundMessage handles it via FCM
+  //
+  // This is identical to how admin gets notified via onSnapshot.
   useEffect(() => {
     if (!user || resolvedRole !== 'user') return;
 
@@ -156,7 +252,6 @@ export const useNotifications = () => {
       limit(5)
     );
 
-    // Cache of orderId → last known status (seeded on first snapshot)
     const statusCache = {};
 
     const unsub = onSnapshot(q, (snapshot) => {
@@ -165,16 +260,14 @@ export const useNotifications = () => {
         const curr  = order.status;
         const prev  = statusCache[docSnap.id];
 
-        // Seed on first load — don't fire notifications for existing statuses
+        // Seed on first load — never fire on mount
         if (prev === undefined) {
           statusCache[docSnap.id] = curr;
           return;
         }
 
-        // Status hasn't changed — nothing to do
         if (prev === curr) return;
 
-        // Status changed — update cache
         statusCache[docSnap.id] = curr;
 
         const copy = USER_STATUS_COPY[curr];
@@ -183,12 +276,18 @@ export const useNotifications = () => {
         const title = `${copy.emoji} ${copy.title}`;
         const body  = copy.body;
 
-        console.log(`[UserNotify] Order ${docSnap.id} status changed: ${prev} → ${curr}`);
+        console.log(`[UserNotify] Order ${docSnap.id}: ${prev} → ${curr}`);
 
-        // ── Show OS notification (works in background & foreground) ──
-        showUserOSNotification(title, body, docSnap.id);
+        if (document.visibilityState === 'visible') {
+          // Tab is active — show in-app toast, no OS notification
+          showUserInAppToast(title, body);
+        } else {
+          // Tab is backgrounded — show OS notification
+          // FCM SW may also fire but same `tag` deduplicates them
+          showUserOSNotification(title, body, docSnap.id);
+        }
 
-        // ── Dispatch event so OrderHistory refreshes live ──
+        // Always dispatch so OrderHistory refreshes live
         window.dispatchEvent(new CustomEvent('zap:order-status-changed', {
           detail: { orderId: docSnap.id, status: curr },
         }));
@@ -200,10 +299,10 @@ export const useNotifications = () => {
     return () => unsub();
   }, [user?.uid, resolvedRole]);
 
-  // ── Foreground FCM messages (tab is OPEN & active) ───────
-  // Branches on data.type to handle admin and user notifications separately.
-  // Note: for users, the onSnapshot above already handles foreground toasts.
-  // The FCM handler here is a safety net for when the tab is NOT focused.
+  // ── Foreground FCM messages (tab OPEN) ───────────────────
+  // Users: onSnapshot handles everything — FCM just dispatches
+  //   the refresh event as a safety net.
+  // Admins: plays sound + shows OS notification as usual.
   useEffect(() => {
     if (!user || !('Notification' in window)) return;
     let unsub;
@@ -213,25 +312,17 @@ export const useNotifications = () => {
         const { title, body } = payload.notification || {};
         const data = payload.data || {};
 
-        // ── User: order tracking / delivery status update ───────────────────
-        // onSnapshot above handles the foreground case for users.
-        // This FCM handler is kept as a fallback only.
+        // User — just refresh OrderHistory; toast already shown by onSnapshot
         if (data.type === 'order_tracking') {
-          // Dispatch event so OrderHistory can refresh
           window.dispatchEvent(new CustomEvent('zap:order-status-changed', {
             detail: { orderId: data.orderId, status: data.status },
           }));
           return;
         }
 
-        // ── Admin: new order alert ──────────────────────────────────────────
-        // Plays the loud alert sound and shows an OS notification.
+        // Admin — loud sound + OS notification
         playNotificationSound('/sounds/order-alert.mp3');
-
         if (Notification.permission === 'granted') {
-          // ✅ Use showNotification() via SW instead of new Notification().
-          // On installed Android PWAs, new Notification() is blocked.
-          // showNotification() via the SW works reliably on both Android & iOS.
           navigator.serviceWorker.ready.then((registration) => {
             registration.showNotification(title || '🛍️ New Order – ZAP Delivery', {
               body,
@@ -248,14 +339,12 @@ export const useNotifications = () => {
           });
         }
       });
-    } catch { /* messaging not supported in this browser */ }
+    } catch { /* messaging not supported */ }
 
     return () => { if (unsub) unsub(); };
   }, [user?.uid]);
 
   // ── Listen for messages posted by the service worker ──────
-  // The SW sends NEW_ORDER when admin clicks a background notification
-  // and ORDER_STATUS_CHANGED when a user clicks their tracking notification.
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
 
@@ -264,7 +353,6 @@ export const useNotifications = () => {
         playNotificationSound('/sounds/order-alert.mp3');
         window.dispatchEvent(new CustomEvent('zap:new-order', { detail: event.data }));
       }
-
       if (event.data?.type === 'ORDER_STATUS_CHANGED') {
         window.dispatchEvent(new CustomEvent('zap:order-status-changed', {
           detail: { orderId: event.data.orderId },
